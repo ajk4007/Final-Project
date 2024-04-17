@@ -1,0 +1,778 @@
+---
+title: "Milestone 4 - Finish Aligning and Generate Read Counts"
+author: "Alexander Karr"
+date: "2024-04-01"
+output: 
+  html_document:
+    toc: true
+---
+
+*The goal of this week’s homework is to complete the alignment and read count generation of all the samples of your project data. You all had a first go at it during the HW of week 6. Now is the time to get back to that, change what needs to be changed and write a script that will perform the alignment for all your samples. The final step for this week should generate a table of read counts which you should read into R.*
+
+*Set up a github repository where you will store all your scripts, and your final report. Submit the URL of your repo. If you want to set it to private, you will have to grant us access, i.e., Luce (lskrbnek), Merv (mfansler), Cyrus (tamlongyat). Align all your samples. Ideally use a for-loop within a script, i.e., automate and standardize the task to a certain extent, but do remember that legibility is valuable, too.*
+
+*Generate a read count table:*
+
+*Load the read count table into R and perform the quality controls and processing steps that we discussed in class. We also strongly encourage you to start reading up on the biological background of your samples so that you can put the results of the QC and explorations into their context. Always try to answer the question “Does this make sense?!” when generating a new plot.*
+
+
+
+# Part 1 - Sample Alignment
+
+## Downloading and processing remaining samples
+
+I prefetch my last two remaining fastq files of my BJ48h condition (pre-Yamanaka induction). The samples themselves are titled 	BJ48hS2 and BJ48hS3, respectively. I then download my three samples of my post-Yamanaka-factor-induction condition BJOSKM96hS1, BJOSKM96hS2, and BJOSKM96hS3.
+```{bash, eval = FALSE}
+prefetch SRX9283432
+prefetch SRX9283433
+prefetch SRX9283443
+prefetch SRX9283444
+prefetch SRX9283445
+
+```
+
+
+I then use fasterq dump with the paired end option.
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815321/
+Output:
+spots read      : 57,203,398
+reads read      : 114,406,796
+reads written   : 57,203,398
+reads 0-length  : 57,203,398
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815322/
+Output:
+spots read      : 61,690,860
+reads read      : 123,381,720
+reads written   : 61,690,860
+reads 0-length  : 61,690,860
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815332/
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815333/
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815334/
+```
+
+
+I wrote a shell script to gzip all of my remaining fastq files. I do this in scratch, and then move them using VS code to my project folder.
+```{bash eval = FALSE}
+#!/bin/bash
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=gzipFastqs
+#SBATCH --time=01:0:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=20G        # Adjust based on your expectation of memory need
+
+# Check if at least one argument is provided
+if [ $# -eq 0 ]; then
+    echo "No fastq files provided!"
+    exit 1
+fi
+
+# Loop through each fastq file and gzip it
+for file in "$@"; do
+    gzip "$file"
+done
+```
+
+```{bash eval = FALSE}
+I run the gzipping script after making it executable. 
+chmod +x gzip_fastqs.sh
+sbatch gzip_fastqs.sh SRR12815321_1.fastq SRR12815321_2.fastq SRR12815322_1.fastq SRR12815322_2.fastq SRR12815332_1.fastq SRR12815332_2.fastq SRR12815333_1.fastq SRR12815333_2.fastq SRR12815333_2.fastq SRR12815334_2.fastq
+```
+
+## FastQC
+I then run FastQC, and aggregate all of this into a MultiQC report on all of my samples. I test for BGI-specific adapter sequences. The study authors stated that "the fastq sequences did not require adapter removal, trimming, or filtering" in the methods of their Nature paper. But I want to verify that statement myself, and thus found custom adapter sequences online that were recommended for testing with BGI (rather than Illumina). I place them in a text file called custom_adapters.txt. The contents are below (I would like you guys to see, in case I got these sequences wrong. I struggled to find any information online). 
+
+>AAGTCGGAGGCCAAGCGGTCTTAGGAAGACAA
+AAGTCGGAGGCCAAGCGGTCTTAGGAAGACAA
+>AAGTCGGATCGTAGCCATGTCGTTCTGTGAGCCAAGGAGTTG
+AAGTCGGATCGTAGCCATGTCGTTCTGTGAGCCAAGGAGTTG
+
+
+I also rename all of the FastQC files to their actual sample names. My script for FastQC and MultiQC is below:
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=fastAndMultiQC
+#SBATCH --time=01:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=10G        # Adjust based on your expectation of memory need
+
+# Load the FastQC and MultiQC modules
+mamba activate angsd
+
+# Define the directory to store the FastQC and MultiQC output
+OUTPUT_DIR="qc_output"
+
+# Define the file containing the custom adapter sequences
+ADAPTERS_FILE="custom_adapters.txt"
+
+# Create the output directory if it doesn't exist
+mkdir -p ${OUTPUT_DIR}
+
+# Loop over all FASTQ files provided as arguments
+for FASTQ_FILE in "$@"
+do
+    # Run FastQC on the current FASTQ file
+    fastqc ${FASTQ_FILE} --outdir ${OUTPUT_DIR} --contaminants ${ADAPTERS_FILE}
+
+    # Copy the FastQC report to the output directory
+    cp ${FASTQ_FILE}_fastqc.zip ${OUTPUT_DIR}
+    cp ${FASTQ_FILE}_fastqc.html ${OUTPUT_DIR}
+done
+
+mamba activate multiqc
+# Run MultiQC on the FastQC reports in the output directory
+multiqc ${OUTPUT_DIR} --outdir ${OUTPUT_DIR}
+
+
+```
+
+I render executable, and then run this script.
+```{bash eval = FALSE}
+chmod +x fast_and_multiqc.sh
+sbatch fast_and_multiqc.sh BJ48hS1_1.fastq.gz BJ48hS1_2.fastq.gz BJ48hS2_1.fastq.gz BJ48hS2_2.fastq.gz BJ48hS3_1.fastq.gz BJ48hS3_2.fastq.gz BJOSKM96HS1_1.fastq.gz BJOSKM96HS1_2.fastq.gz BJOSKM96HS2_1.fastq.gz BJOSKM96HS2_2.fastq.gz BJOSKM96HS3_1.fastq.gz BJOSKM96HS3_2.fastq.gz
+```
+
+I will include my MultiQC report in my github repo (containing my later QoRTs quality control as well). But I wanted to highlight plots of interest, that either stood out to me on their own, or were related to issues that I have already discussed with you guys. 
+
+
+![](fastqc_adapter_content_plot.png)
+Here, I verify that the adapter content (with my custom BGI adapters) really is quite low, and that the study authors refrained from running TrimGalore fairly. Sample one of condition one (BJ48hS1) does send 
+
+
+
+
+
+
+
+
+
+
+![](fastqc_sequence_duplication_levels_plot.png)
+Having already to some extent discussed duplication rate with Merv (this was for post-alignment QC, however) I wanted to include my FastQC duplication levels for all three of my samples (paired read). While not nearly so astronomical as I originally got from BAMQC for my first sample from condition 1 (83%), these overall rates for both conditions are still very high and fail FastQC's "Status Check" for Sequence Duplication. Proceeding, as I will, however with QoRTs rather than BAMQC for my post-alignment quality control, we will see how this read duplication manifests in actual recurring alignments. 
+
+
+![](per_base_sequence_content.png)
+The last standout result in my pre-alignment quality control is the per base sequence content, quantifying the proportion of each base at each position in the 100 BP reads from my samples. By about base pair number 10 (reading from left to right and 5' to 3'), this base imbalance has disappeared in all samples. Given the use of random hexamers to prime reverse transcription with this library, however, this bias at the 5' end is common, and as a known technical artifact, does not normally adversely affect downstream analysis as far as I know.
+
+## Running STAR and using SAMtools
+I then run my all_samples_alignment.sh shell script on all of my remaining samples, with the same STAR parameters as I did for my first sample. Those will be visible in the script below. 
+
+The alignment shell script is below:
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=allSamplesAlignment
+#SBATCH --time=04:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=50G        # Adjust based on your expectation of memory need
+
+# Load the STAR module, if necessary. This command might change based on your system's module environment.
+# module load STAR
+
+mamba activate angsd
+
+# Define the directory containing the genome index
+GENOME_DIR="star_index_output"
+
+# Define the directory to store the alignment output
+ALIGNMENT_DIR="star_alignment_output"
+
+# Create an array with all input FASTQ files
+FASTQ_FILES=("$@")
+
+# Loop over all pairs of FASTQ files
+for ((i=0; i<${#FASTQ_FILES[@]}; i+=2))
+do
+    # Define paths to the FASTQ files
+    FASTQ1=${FASTQ_FILES[$i]}
+    FASTQ2=${FASTQ_FILES[$i+1]}
+
+    # Define the output prefix for this pair of FASTQ files
+    OUTPUT_PREFIX="${ALIGNMENT_DIR}/$(basename ${FASTQ1} .fastq.gz)_$(basename ${FASTQ2} .fastq.gz)"
+
+    # Run STAR for alignment
+    STAR --genomeDir ${GENOME_DIR} \
+         --readFilesIn ${FASTQ1} ${FASTQ2} \
+         --runThreadN ${SLURM_CPUS_PER_TASK} \
+         --outSAMtype BAM SortedByCoordinate \
+         --outFileNamePrefix ${OUTPUT_PREFIX} \
+         --readFilesCommand zcat  # Use this if your FASTQ files are gzipped
+done
+```
+
+
+```{bash eval = FALSE}
+cd Project
+chmod +x all_samples_alignment.sh
+sbatch all_samples_alignment.sh BJ48hS2_1.fastq.gz BJ48hS2_2.fastq.gz BJ48hS3_1.fastq.gz BJ48hS3_2.fastq.gz BJOSKM96HS1_1.fastq.gz BJOSKM96HS1_2.fastq.gz BJOSKM96HS2_1.fastq.gz BJOSKM96HS2_2.fastq.gz BJOSKM96HS3_1.fastq.gz BJOSKM96HS3_2.fastq.gz
+```
+
+I begin with this use of samtools to make sure that my alignment file appears to have the right organizational structure by looking at the header from one sample of each condition..
+```{bash, eval = FALSE}
+samtools view -H  star_alignment_output/BJ48hS2_Aligned.sortedByCoord.out.bam | head
+output:
+@HD     VN:1.4  SO:coordinate
+@SQ     SN:chr1 LN:248956422
+@SQ     SN:chr2 LN:242193529
+@SQ     SN:chr3 LN:198295559
+@SQ     SN:chr4 LN:190214555
+@SQ     SN:chr5 LN:181538259
+@SQ     SN:chr6 LN:170805979
+@SQ     SN:chr7 LN:159345973
+@SQ     SN:chr8 LN:145138636
+@SQ     SN:chr9 LN:138394717
+```
+
+```{bash eval = FALSE}
+samtools view -H star_alignment_output/BJOSKM96hS1.sortedByCoord.bam | head
+Output:
+@HD     VN:1.4  SO:coordinate
+@SQ     SN:chr1 LN:248956422
+@SQ     SN:chr2 LN:242193529
+@SQ     SN:chr3 LN:198295559
+@SQ     SN:chr4 LN:190214555
+@SQ     SN:chr5 LN:181538259
+@SQ     SN:chr6 LN:170805979
+@SQ     SN:chr7 LN:159345973
+@SQ     SN:chr8 LN:145138636
+@SQ     SN:chr9 LN:138394717
+```
+
+
+I will then index the remaining alignment files.
+```{bash, , eval = FALSE}
+samtools index star_alignment_output/BJ48hS2_Aligned.sortedByCoord.out.bam 
+samtools index star_alignment_output/BJ48hS3_Aligned.sortedByCoord.out.bam 
+samtools index star_alignment_output/BJOSKM96HS1.sortedByCoord.bam
+samtools index star_alignment_output/BJOSKM96HS2.sortedByCoord.bam
+samtools index star_alignment_output/BJOSKM96HS3.sortedByCoord.bam
+```
+
+# Part 2 - Alignment QC
+
+After initially attempting to use RseQC in mimicry of the study authors, I eventually resorted to QoRTs given that my GTF appeared incapable of converting to a BED format that could work with RSeQC. From searching online, it seems like Gencode annotations - with how thorough they are, often need to be pre-processed before a successful bedops conversion to .bed format. 
+
+## Running and analyzing QoRTs
+Below is my script for generating all of my QoRTs post-alignment quality control data/plots. 
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=QoRTsQC
+#SBATCH --time=04:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=70G        # Adjust based on your expectation of memory need
+
+mamba activate qorts
+
+# Get the GTF file from the arguments
+gtf_file="${@: -1}"
+
+# Loop over all other arguments, which should be BAM files
+for bam_file in "${@:1:$#-1}"
+do
+    # Extract the sample name from the BAM file name
+    sample_name=$(basename "$bam_file" .bam)
+
+    # Create a directory for the output
+    mkdir -p "${sample_name}_qorts_output"
+
+    # Run qorts with fewer options
+    qorts -Xmx48G QC \ --generatePlots --title "$sample_name" \
+    --addFunctions writeGeneCounts \
+    "$bam_file" "$gtf_file" "${sample_name}_qorts_output"
+done
+```
+
+
+```{bash eval = FALSE}
+chmod +x post_alignment_qc.sh
+sbatch post_alignment_qc.sh star_alignment_output/BJ48hS1.sortedByCoord.bam star_alignment_output/BJ48hS2.sortedByCoord.bam star_alignment_output/BJ48hS3.sortedByCoord.bam star_alignment_output/BJOSKM96hS1.sortedByCoord.bam star_alignment_output/BJOSKM96hS2.sortedByCoord.bam star_alignment_output/BJOSKM96hS3.sortedByCoord.bam gencode.v45.primary_assembly.basic.annotation.gtf 
+```
+
+Although I have already collectively analyzed my FastQC results, running MultiQC on them to see if any of the results would have altered my choice of STAR parameters or made me want to go back and trim adapters, I will include my FastQC results in the final MultiQC report for ease of access.
+
+So, after moving all of my QoRTs and FastQC files into my qc_output directory, I Multiqc them all. The report is output to the directory final_multiqc_dir. 
+```{bash eval = FALSE}
+multiqc qc_output/ -o final_multiqc_dir
+```
+
+My full QoRTs multiplot PDFs, as well as my aggregate MultiQC report, will be on my Github repo. For ease of access, however, and to draw particular attention to them, I will include images of some gene-body coverage, gene assignment diversity, and clipping rate plots below. 
+
+**<u> BJ48h - Sample One</u>**
+
+![](alignment_clipping_sample_1.png "BJ48h - Sample One (BJ48hS1)")
+
+**<u> BJ48h - Sample Two</u>**
+
+![](alignment_clipping_sample_2.png "BJ48h - Sample Two (BJ48hS2)")
+
+**<u> BJ48h - Sample Three</u>**
+
+![](alignment_clipping_sample_3.png "BJ48h - Sample Three (BJ48hS3)")
+
+**<u> BJOSKM96h - Sample One</u>**
+
+![](alignment_clipping_sample_4.png "BJOSKM96h - Sample One (BJOSKM96hS1)")
+
+**<u> BJOSKM96h - Sample Two</u>**
+
+![](alignment_clipping_sample_5.png "BJOSKM96h - Sample Two (BJOSKM96hS2)")
+
+**<u> BJOSKM96h - Sample Three</u>**
+
+![](alignment_clipping_sample_6.png "BJOSKM96h - Sample Three (BJOSKM96hS3)")
+
+I include my clipping rate plots, as (although I was using it mistakenly) BAMQC pinged a slightly alarming result in the prior milestone. In condition one, BJ48h (pre-Yamanaka-factor-induction), sample three is showing slightly better clipping behavior than samples 1 and 2, and my guess for why the rate is so high at read starts is due to the "per-base sequence quality" patterning I identified in my FastQC results earlier. 
+
+In condition two - post-Yamanaka-factor induction - although the differences are again overall negligible, sample two is showing a marginally lower clipping rate across its paired reads than samples one and three. 
+
+**<u> BJ48h - Sample One</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_1.png "Sample One (BJ48hS1)")
+
+**<u> BJ48h - Sample Two</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_2.png "Sample Two (BJ48hS2)")
+
+**<u> BJ48h - Sample Three</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_3.png "Sample Three (BJ48hS3)")
+
+**<u> BJOSKM96h - Sample One</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_4.png "BJOSKM96h - Sample One (BJOSKM96hS1)")
+
+**<u> BJOSKM96h - Sample Two</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_5.png "BJOSKM96h - Sample Two (BJOSKM96hS2)")
+
+**<u> BJOSKM96h - Sample Three</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_6.png "BJOSKM96h - Sample Three (BJOSKM96hS3)")
+
+Both across and within conditions, we're seeing fairly homogeneous data. The cumulative gene assignment diversity plots show the general behavior one would expect of well-extracted RNA-seq data, with a small number of genes having a fairly high proportion of the reads (due to expression differences). However, the uniform distribution we might expect of gene body coverage (although this is very rarely the case) is instead U-shaped here. We are therefore seeing both a 5' and 3' bias for reads/alignments.
+
+As aforementioned, I will include my MultiQC report and full QoRTs multiplots for all of my samples in my Github repo. 
+
+# Part 3 - Read count generation and quality control
+
+## featureCounts
+I read a script that performs featureCounts with default parameters (excepting -p and --countReadPairs for paired-end reads) on all of my samples in aggregate. The script is below:
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=featureCounts
+#SBATCH --time=01:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=10G        # Adjust based on your expectation of memory need
+
+mamba activate angsd
+
+# Path to your annotation file
+annotation_file="${@: -1}"
+
+# Create an array to hold the bam files
+declare -a bam_files
+
+# Loop over all other arguments, which should be BAM files
+for bam_file in "${@:1:$#-1}"
+do
+    # Add the bam file to the array
+    bam_files+=("$bam_file")
+done
+
+# Run featureCounts on all bam files at once
+featureCounts -p --countReadPairs -a $annotation_file -o "featureCountsOutput.counts" "${bam_files[@]}"
+```
+
+I render the featureCounts script executable and run it, downloading the resulting summary and counts file to my local computer for processing in rstudio. 
+```{bash eval = FALSE}
+chmod +x all_samples_featureCounts.sh
+sbatch all_samples_featureCounts.sh star_alignment_output/BJ48hS1.sortedByCoord.bam star_alignment_output/BJ48hS2.sortedByCoord.bam star_alignment_output/BJ48hS3.sortedByCoord.bam star_alignment_output/BJOSKM96hS1.sortedByCoord.bam star_alignment_output/BJOSKM96hS2.sortedByCoord.bam star_alignment_output/BJOSKM96hS3.sortedByCoord.bam gencode.v45.primary_assembly.basic.annotation.gtf
+```
+
+```{r}
+count_summary = read.table("finalFeatureCountsOutput.counts.summary")
+print(count_summary)
+```
+
+## Interpreting the featureCounts summary file
+I clean up the sample names in the "Status" row.
+```{r}
+# Assuming your data is in a dataframe called 'count_summary' and the sample names are in the first row
+
+# Adjust the regular expression to match both BJ48h and BJOSKM96HS sample names
+count_summary[1, -1] <- sapply(count_summary[1, -1], function(x) {
+  # Updated regex to capture BJ48hS# and BJOSKM96HS#
+  matches <- regmatches(x, regexpr("(BJ48hS\\d+|BJOSKM96hS\\d+)", x))
+  return(matches)
+})
+
+# Print the cleaned first row to check
+print(count_summary[1,])
+
+
+```
+
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+# Convert count values to numeric
+count_summary[-1, -1] <- apply(count_summary[-1, -1], 2, as.numeric)
+
+# Reshape data from wide to long format for easier manipulation
+count_long <- pivot_longer(count_summary, cols = -V1, names_to = "Sample", values_to = "Count")
+
+# First, ensure all counts are numeric
+count_long$Count <- as.numeric(count_long$Count)
+
+# Calculate total unassigned by summing all Unassigned categories
+total_unassigned <- count_long %>%
+  filter(V1 != "Status", V1 != "Assigned") %>%
+  group_by(Sample) %>%
+  summarize(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(V1 = "Unassigned")
+
+# Extract assigned reads, ensuring it has the same columns as total_unassigned
+assigned_reads <- count_long %>%
+  filter(V1 == "Assigned") %>%
+  select(Sample, V1, Count)
+
+# Combine Assigned and Total Unassigned reads
+combined_reads <- bind_rows(assigned_reads, total_unassigned)
+
+# Define the mapping from "V" labels to "BJ48hS#" labels
+sample_name_map <- c(V2 = "BJ48hS1", V3 = "BJ48hS2", V4 = "BJ48hS3", V5 = "BJOSKM96hS1", V6 = "BJOSKM96hS2", V7 = "BJOSKM96hS3")
+
+# Plot Assigned vs Unassigned for each sample with correct names in the x-axis
+ggplot(combined_reads, aes(x = factor(Sample, labels = sample_name_map), y = Count, fill = V1)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("Assigned" = "blue", "Unassigned" = "red")) +
+  labs(title = "Assigned vs Unassigned Reads Per Sample", x = "Sample", y = "Read Count") +
+  theme_minimal()
+
+# Calculate total Assigned and Unassigned across all samples
+total_combined <- combined_reads %>%
+  group_by(V1) %>%
+  summarize(Total_Count = sum(Count, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot Assigned vs Unassigned for all samples combined
+ggplot(total_combined, aes(x = V1, y = Total_Count, fill = V1)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("Assigned" = "blue", "Unassigned" = "red")) +
+  labs(title = "Assigned vs Unassigned Reads Across All Samples", x = "Category", y = "Total Read Count") +
+  theme_minimal()
+
+# For the breakdown of Unassigned reads, ensure we exclude zero counts and adjust labels as necessary
+unassigned_details <- count_long %>%
+  filter(V1 != "Status" & V1 != "Assigned" & Count > 0)
+
+
+# Plot for different types of Unassigned reads for each sample with correct names in the x-axis
+ggplot(unassigned_details, aes(x = factor(Sample, labels = sample_name_map), y = Count, fill = V1)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Breakdown of Unassigned Reads per Sample", x = "Sample Status", y = "Read Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+
+
+```
+
+The vast majority of reads are assigned across all samples, with an overall Assigned:Unassigned ratio of ~5:1. Most of the unassigned reads come from "Ambiguity" or "Multimapping", which respectively mean a read mapping to a multi-feature stretch, or a read mapping equally well to multiple features. The first sample of condition one, BJOSKM96hS1, has a peculiarly high number of multimapping reads, however. 
+
+## Processing the featureCounts count table.
+
+```{r}
+library(DESeq2)
+library(ggplot2)
+library(magrittr)
+count_table = read.table("finalFeatureCountsOutput.counts")
+#print(names(count_table))
+print(count_table[1, ])
+```
+
+
+```{r}
+# Extract the first row as the new column names
+new_col_names <- as.character(unlist(count_table[1, ]))
+
+# Modify this line to also capture BJOSKM96HS1 to BJOSKM96HS3
+new_col_names[7:12] <- gsub(".*(BJ48hS[1-3]|BJOSKM96hS[1-3]).*\\.bam", "\\1", new_col_names[7:12])
+
+# Assign the new column names to the data frame
+names(count_table) <- new_col_names
+
+# Remove the first row from the data frame to eliminate the header row now duplicated in the column names
+count_table <- count_table[-1, ]
+
+print(names(count_table))
+
+```
+
+```{r}
+row.names(count_table) = make.names(count_table$Geneid)
+
+cts_gene_sample <- as.matrix(count_table[, -c(1:6)])
+head(cts_gene_sample)
+```
+
+
+
+
+```{r}
+df_coldata <- data.frame(condition = colnames(cts_gene_sample),
+row.names = colnames(cts_gene_sample))
+df_coldata
+```
+
+
+```{r}
+str(df_coldata)
+```
+
+```{r}
+# Convert count data in 'cts_gene_sample' from character to numeric
+cts_gene_sample <- apply(cts_gene_sample, 2, as.numeric)
+
+# Check if there were any NAs introduced by conversion (which would indicate non-numeric values)
+if(any(is.na(cts_gene_sample))) {
+  stop("Conversion introduced NAs, indicating non-numeric values in the count data.")
+}
+
+# Assuming 'df_coldata' and the design formula are correctly specified
+# Try creating the DESeqDataSet object again
+dds_yamanaka <- DESeqDataSetFromMatrix(countData = cts_gene_sample,
+                                         colData = df_coldata,
+                                       rowData =  count_table[,1:6],
+                                         design = ~ condition)
+dds_yamanaka
+```
+
+I check the number of gene counts per sample.
+```{r}
+colSums(counts(dds_yamanaka)) %>% barplot
+```
+```{r}
+dim(dds_yamanaka)
+```
+
+
+```{r}
+keep_genes <- rowSums(counts(dds_yamanaka)) > 0
+dds_yamanaka <- dds_yamanaka[keep_genes, ]
+dim(dds_yamanaka)
+```
+
+
+```{r}
+dds_yamanaka <- estimateSizeFactors(dds_yamanaka) #calculate size factors and add them to the object. 
+plot( sizeFactors(dds_yamanaka), colSums(counts(dds_yamanaka)), 
+ylab = "Library sizes", xlab = "Size factors", cex = .6 )
+
+```
+
+
+```{r}
+# Set up the plotting area to accommodate two plots side by side
+par(mfrow=c(1,2)) 
+
+# Extract sample names from the DESeq2 object
+sample_names <- colnames(counts(dds_yamanaka))
+
+# Box plot of non-normalized counts
+boxplot(log2(counts(dds_yamanaka) + 1), notch=TRUE,
+        main="Non-normalized read counts",
+        ylab="log2(read counts)", 
+        names=sample_names, # Add sample names as x-axis labels
+        cex.axis=0.6, # Adjust size of axis labels if necessary
+        las=2) # Rotate x-axis labels to make them vertical
+
+# Box plot of size-factor normalized values
+boxplot(log2(counts(dds_yamanaka, normalized=TRUE) + 1), notch=TRUE,
+        main="Size-factor-normalized read counts",
+        ylab="log2(read counts)", 
+        names=sample_names, # Add sample names as x-axis labels
+        cex.axis=0.6, # Adjust size of axis labels if necessary
+        las=2) # Rotate x-axis labels to make them vertical
+
+```
+
+The difference post-normalization does not appear extremely significant, but it does help bring the mean log-transformed read counts of the two conditions closer to one another. 
+
+For ease of access, I produce a log-transformed counts matrix and a log-transformed normalized counts matrix that I will include within my assays of my greater DESeq2 object.
+```{r}
+assay(dds_yamanaka, "log_counts") <- log2(counts(dds_yamanaka, normalized = FALSE) + 1)
+#Log-normalized read counts
+assay(dds_yamanaka, "log_norm_counts") <- log2(counts(dds_yamanaka, normalized=TRUE) + 1)
+```
+
+Within each condition amongst the technical replicates, I'll now make a scatterplot of my log normalized counts against one another to ensure that the samples' gene values highly correlate. 
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+
+# Assuming 'dds_yamanaka' is already your DESeq2 object and log_norm_counts are already calculated
+sample_names <- colnames(dds_yamanaka)
+
+# Define groups based on conditions
+condition1 <- grep("BJ48hS", sample_names, value = TRUE)
+condition2 <- grep("BJOSKM96hS", sample_names, value = TRUE)
+
+# Function to plot each condition's sample pairs
+plot_samples <- function(samples, condition_label) {
+  if (length(samples) < 2) {
+    cat(sprintf("Not enough samples to plot for condition %s\n", condition_label))
+    return()  # Skip plotting if less than two samples
+  }
+  
+  # Setup the plotting area
+  par(mfrow = c(1, choose(length(samples), 2)))
+  
+  # Generate combinations and plot
+  combn(samples, 2, function(pair) {
+    dds_yamanaka[, pair] %>%
+      assay("log_norm_counts") %>%
+      { plot(x = .[,1], y = .[,2], xlab = pair[1], ylab = pair[2], pch = 20, cex = .1, 
+             main = paste(pair[1], "vs", pair[2], "\nCondition:", condition_label)) }
+  }, simplify = FALSE)
+}
+
+# Perform the plotting for each condition
+plot_samples(condition1, "BJ48hS")
+plot_samples(condition2, "BJOSKM96h")
+
+```
+
+From the fanning out in the bottom left corner of all of the sample plots, we are seeing the standard behavior of expression level standard deviation depending upon the mean, where genes with low read counts exhibit high variance. 
+
+
+I use VST to help mitigate our heteroskedasticity. I know that rlog was recommended in class as being better optimized for RNA-seq read counts, but it was repeatedly crashing my R session (this is presumably due to my high read count samples). Reading up on the documentation, the "blind" parameter should be set to false if you expected large transcriptional differences between your conditions. Could you guys give me some feedback on this one? The Yamanaka factors (as you'll see in my PCA below) are fairly transcriptionally transformative, but I don't know what exactly qualifies as "large."
+```{r}
+# Load necessary library
+library(DESeq2)
+
+# Compute the Variance Stabilizing Transformation (VST)
+vst_dds <- vst(dds_yamanaka, blind = TRUE)
+
+# Define groups based on conditions
+sample_names <- colnames(vst_dds)
+condition1 <- grep("BJ48hS", sample_names, value = TRUE)
+condition2 <- grep("BJOSKM96hS", sample_names, value = TRUE)
+
+# Function to plot each condition's sample pairs
+vst_plot_samples <- function(samples, condition_label) {
+  if (length(samples) < 2) {
+    cat(sprintf("Not enough samples to plot for condition %s\n", condition_label))
+    return()  # Skip plotting if less than two samples
+  }
+  
+  # Setup the plotting area
+  par(mfrow = c(1, choose(length(samples), 2)))
+  
+  # Generate combinations and plot
+  combn(samples, 2, function(pair) {
+    data_matrix <- assay(vst_dds[, pair])
+    plot(x = data_matrix[,1], y = data_matrix[,2], xlab = pair[1], ylab = pair[2], pch = 20, cex = 0.1, 
+         main = paste(pair[1], "vs", pair[2], "\nCondition:", condition_label))
+  }, simplify = FALSE)
+}
+
+# Perform the plotting for each condition
+vst_plot_samples(condition1, "BJ48hS")
+vst_plot_samples(condition2, "BJOSKM96h")
+
+
+
+```
+
+VST tightens up the variance significantly at lower expression levels, but not quite so much as rlog did in some of the in-class examples. Would you guys recommend that I run rlog in batches, then? Or do you think VST looks adequate here?
+
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(pheatmap)
+
+# Assuming 'vst_dds' is your DESeq2 object with VST data already computed
+# First, get the VST data as a matrix
+vst_matrix <- assay(vst_dds)
+
+# Calculate Pearson correlation coefficient matrix
+corr_coeff <- cor(vst_matrix, method = "pearson")
+
+# Ensure the row and column names of the correlation matrix are set to sample names
+rownames(corr_coeff) <- colnames(vst_dds)
+colnames(corr_coeff) <- colnames(vst_dds)
+
+# Convert correlation coefficients to a distance matrix
+distance_matrix <- as.dist(1 - corr_coeff)
+
+# Create a heatmap using pheatmap
+pheatmap::pheatmap(distance_matrix,
+                   main = "Pearson correlation",
+                   color = colorRampPalette(c("blue", "white", "red"))(255),  # Color gradient from blue to red
+                   clustering_distance_rows = distance_matrix,
+                   clustering_distance_cols = distance_matrix,
+                   labels_row = rownames(distance_matrix),
+                   labels_col = colnames(distance_matrix),
+                   treeheight_row = 0,
+                   show_rownames = TRUE,
+                   show_colnames = TRUE,
+                   fontsize_row = 10,
+                   fontsize_col = 10,
+                   border_color = NA)  # No border between cells
+
+```
+
+I can't for the life of me get labels to succesfully show here, despite rejigging font size, other arguments, and adjusting the plot size in case my labels were getting squished and then excluded. My samples, from top-to-bottom and left-to-right, go from BJ48hS1 to BJOSKM96hS3. 
+
+From the heatmap, the two conditions very clearly separate from one another. We appear to be seeing more internal variation amongst the post-yamanaka BJOSKM96h condition, as well, with that condition's first sample differing the most from the other two. BJSOKM96hS1, interestingly, was also the sample (including both conditions) with by far the largest number of unassigned reads. 
+
+```{r}
+rv <- rowVars(vst_matrix)
+top_variable <- order(rv, decreasing = TRUE)[seq_len(500)]
+pca <- prcomp(t(vst_matrix[top_variable, ]))
+head(pca$x)
+
+```
+
+```{r}
+plotPCA(vst_dds) +
+labs(color=NULL) +
+theme_bw()
+```
+
+Collectively, our two principal components (done almost entirely by PC1), capture 96% of the total variance across samples in the top 500 variable genes. Again, we get an extremely clear across-condition separation, but we are interestingly seeing the third sample of the pre-yamanaka condition separating from the other two. 
+
+However, when considering the fact that the second principal component - our y-axis, here - explains only 2% of the top 500 genes' variance, we should put much more weight in x-plane rather than y-plane variation as meaningfully demarcating expressional differences. Nonetheless, it is something to pay attention to as I move further with my analysis. 
