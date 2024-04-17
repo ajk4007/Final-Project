@@ -21,4 +21,4 @@ do
 done
 
 # Run featureCounts on all bam files at once
-featureCounts -p -a $annotation_file -o "featureCountsOutput.counts" "${bam_files[@]}"
+featureCounts -p --countReadPairs -a $annotation_file -o "featureCountsOutput.counts" "${bam_files[@]}"
