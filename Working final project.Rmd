@@ -1,0 +1,1632 @@
+---
+title: "Final Project - Exhaustive Document"
+author: "Alexander Karr"
+date: "2024-04-01"
+output: 
+  html_document:
+    toc: true
+---
+
+*The goal of this week’s homework is to complete the alignment and read count generation of all the samples of your project data. You all had a first go at it during the HW of week 6. Now is the time to get back to that, change what needs to be changed and write a script that will perform the alignment for all your samples. The final step for this week should generate a table of read counts which you should read into R.*
+
+*Set up a github repository where you will store all your scripts, and your final report. Submit the URL of your repo. If you want to set it to private, you will have to grant us access, i.e., Luce (lskrbnek), Merv (mfansler), Cyrus (tamlongyat). Align all your samples. Ideally use a for-loop within a script, i.e., automate and standardize the task to a certain extent, but do remember that legibility is valuable, too.*
+
+*Generate a read count table:*
+
+*Load the read count table into R and perform the quality controls and processing steps that we discussed in class. We also strongly encourage you to start reading up on the biological background of your samples so that you can put the results of the QC and explorations into their context. Always try to answer the question “Does this make sense?!” when generating a new plot.*
+
+
+
+# Part 1 - Sample Alignment
+
+## Downloading and processing remaining samples
+
+I prefetch my last two remaining fastq files of my BJ48h condition (pre-Yamanaka induction). The samples themselves are titled 	BJ48hS2 and BJ48hS3, respectively. I then download my three samples of my post-Yamanaka-factor-induction condition BJOSKM96hS1, BJOSKM96hS2, and BJOSKM96hS3.
+```{bash, eval = FALSE}
+prefetch SRX9283432
+prefetch SRX9283433
+prefetch SRX9283443
+prefetch SRX9283444
+prefetch SRX9283445
+
+```
+
+
+I then use fasterq dump with the paired end option.
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815321/
+Output:
+spots read      : 57,203,398
+reads read      : 114,406,796
+reads written   : 57,203,398
+reads 0-length  : 57,203,398
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815322/
+Output:
+spots read      : 61,690,860
+reads read      : 123,381,720
+reads written   : 61,690,860
+reads 0-length  : 61,690,860
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815332/
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815333/
+```
+
+```{bash eval = FALSE}
+fasterq-dump --split-files SRR12815334/
+```
+
+
+I wrote a shell script to gzip all of my remaining fastq files. I do this in scratch, and then move them using VS code to my project folder.
+```{bash eval = FALSE}
+#!/bin/bash
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=gzipFastqs
+#SBATCH --time=01:0:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=20G        # Adjust based on your expectation of memory need
+
+# Check if at least one argument is provided
+if [ $# -eq 0 ]; then
+    echo "No fastq files provided!"
+    exit 1
+fi
+
+# Loop through each fastq file and gzip it
+for file in "$@"; do
+    gzip "$file"
+done
+```
+
+```{bash eval = FALSE}
+I run the gzipping script after making it executable. 
+chmod +x gzip_fastqs.sh
+sbatch gzip_fastqs.sh SRR12815321_1.fastq SRR12815321_2.fastq SRR12815322_1.fastq SRR12815322_2.fastq SRR12815332_1.fastq SRR12815332_2.fastq SRR12815333_1.fastq SRR12815333_2.fastq SRR12815333_2.fastq SRR12815334_2.fastq
+```
+
+## FastQC
+I then run FastQC, and aggregate all of this into a MultiQC report on all of my samples. I test for BGI-specific adapter sequences. The study authors stated that "the fastq sequences did not require adapter removal, trimming, or filtering" in the methods of their Nature paper. But I want to verify that statement myself, and thus found custom adapter sequences online that were recommended for testing with BGI (rather than Illumina). I place them in a text file called custom_adapters.txt. The contents are below (I would like you guys to see, in case I got these sequences wrong. I struggled to find any information online). 
+
+>AAGTCGGAGGCCAAGCGGTCTTAGGAAGACAA
+AAGTCGGAGGCCAAGCGGTCTTAGGAAGACAA
+>AAGTCGGATCGTAGCCATGTCGTTCTGTGAGCCAAGGAGTTG
+AAGTCGGATCGTAGCCATGTCGTTCTGTGAGCCAAGGAGTTG
+
+
+I also rename all of the FastQC files to their actual sample names. My script for FastQC and MultiQC is below:
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=fastAndMultiQC
+#SBATCH --time=01:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=10G        # Adjust based on your expectation of memory need
+
+# Load the FastQC and MultiQC modules
+mamba activate angsd
+
+# Define the directory to store the FastQC and MultiQC output
+OUTPUT_DIR="qc_output"
+
+# Define the file containing the custom adapter sequences
+ADAPTERS_FILE="custom_adapters.txt"
+
+# Create the output directory if it doesn't exist
+mkdir -p ${OUTPUT_DIR}
+
+# Loop over all FASTQ files provided as arguments
+for FASTQ_FILE in "$@"
+do
+    # Run FastQC on the current FASTQ file
+    fastqc ${FASTQ_FILE} --outdir ${OUTPUT_DIR} --contaminants ${ADAPTERS_FILE}
+
+    # Copy the FastQC report to the output directory
+    cp ${FASTQ_FILE}_fastqc.zip ${OUTPUT_DIR}
+    cp ${FASTQ_FILE}_fastqc.html ${OUTPUT_DIR}
+done
+
+mamba activate multiqc
+# Run MultiQC on the FastQC reports in the output directory
+multiqc ${OUTPUT_DIR} --outdir ${OUTPUT_DIR}
+
+
+```
+
+I render executable, and then run this script.
+```{bash eval = FALSE}
+chmod +x fast_and_multiqc.sh
+sbatch fast_and_multiqc.sh BJ48hS1_1.fastq.gz BJ48hS1_2.fastq.gz BJ48hS2_1.fastq.gz BJ48hS2_2.fastq.gz BJ48hS3_1.fastq.gz BJ48hS3_2.fastq.gz BJOSKM96HS1_1.fastq.gz BJOSKM96HS1_2.fastq.gz BJOSKM96HS2_1.fastq.gz BJOSKM96HS2_2.fastq.gz BJOSKM96HS3_1.fastq.gz BJOSKM96HS3_2.fastq.gz
+```
+
+I will include my MultiQC report in my github repo (containing my later QoRTs quality control as well). But I wanted to highlight plots of interest, that either stood out to me on their own, or were related to issues that I have already discussed with you guys. 
+
+
+![](fastqc_adapter_content_plot.png)
+Here, I verify that the adapter content (with my custom BGI adapters) really is quite low, and that the study authors refrained from running TrimGalore fairly. Sample one of condition one (BJ48hS1) does send 
+
+
+
+
+
+
+
+
+
+
+![](fastqc_sequence_duplication_levels_plot.png)
+Having already to some extent discussed duplication rate with Merv (this was for post-alignment QC, however) I wanted to include my FastQC duplication levels for all three of my samples (paired read). While not nearly so astronomical as I originally got from BAMQC for my first sample from condition 1 (83%), these overall rates for both conditions are still very high and fail FastQC's "Status Check" for Sequence Duplication. Proceeding, as I will, however with QoRTs rather than BAMQC for my post-alignment quality control, we will see how this read duplication manifests in actual recurring alignments. 
+
+
+![](per_base_sequence_content.png)
+The last standout result in my pre-alignment quality control is the per base sequence content, quantifying the proportion of each base at each position in the 100 BP reads from my samples. By about base pair number 10 (reading from left to right and 5' to 3'), this base imbalance has disappeared in all samples. Given the use of random hexamers to prime reverse transcription with this library, however, this bias at the 5' end is common, and as a known technical artifact, does not normally adversely affect downstream analysis as far as I know.
+
+## Running STAR and using SAMtools
+I then run my all_samples_alignment.sh shell script on all of my remaining samples, with the same STAR parameters as I did for my first sample. Those will be visible in the script below. 
+
+The alignment shell script is below:
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=allSamplesAlignment
+#SBATCH --time=04:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=50G        # Adjust based on your expectation of memory need
+
+# Load the STAR module, if necessary. This command might change based on your system's module environment.
+# module load STAR
+
+mamba activate angsd
+
+# Define the directory containing the genome index
+GENOME_DIR="star_index_output"
+
+# Define the directory to store the alignment output
+ALIGNMENT_DIR="star_alignment_output"
+
+# Create an array with all input FASTQ files
+FASTQ_FILES=("$@")
+
+# Loop over all pairs of FASTQ files
+for ((i=0; i<${#FASTQ_FILES[@]}; i+=2))
+do
+    # Define paths to the FASTQ files
+    FASTQ1=${FASTQ_FILES[$i]}
+    FASTQ2=${FASTQ_FILES[$i+1]}
+
+    # Define the output prefix for this pair of FASTQ files
+    OUTPUT_PREFIX="${ALIGNMENT_DIR}/$(basename ${FASTQ1} .fastq.gz)_$(basename ${FASTQ2} .fastq.gz)"
+
+    # Run STAR for alignment
+    STAR --genomeDir ${GENOME_DIR} \
+         --readFilesIn ${FASTQ1} ${FASTQ2} \
+         --runThreadN ${SLURM_CPUS_PER_TASK} \
+         --outSAMtype BAM SortedByCoordinate \
+         --outFileNamePrefix ${OUTPUT_PREFIX} \
+         --readFilesCommand zcat  # Use this if your FASTQ files are gzipped
+done
+```
+
+
+```{bash eval = FALSE}
+cd Project
+chmod +x all_samples_alignment.sh
+sbatch all_samples_alignment.sh BJ48hS2_1.fastq.gz BJ48hS2_2.fastq.gz BJ48hS3_1.fastq.gz BJ48hS3_2.fastq.gz BJOSKM96HS1_1.fastq.gz BJOSKM96HS1_2.fastq.gz BJOSKM96HS2_1.fastq.gz BJOSKM96HS2_2.fastq.gz BJOSKM96HS3_1.fastq.gz BJOSKM96HS3_2.fastq.gz
+```
+
+I begin with this use of samtools to make sure that my alignment file appears to have the right organizational structure by looking at the header from one sample of each condition..
+```{bash, eval = FALSE}
+samtools view -H  star_alignment_output/BJ48hS2_Aligned.sortedByCoord.out.bam | head
+output:
+@HD     VN:1.4  SO:coordinate
+@SQ     SN:chr1 LN:248956422
+@SQ     SN:chr2 LN:242193529
+@SQ     SN:chr3 LN:198295559
+@SQ     SN:chr4 LN:190214555
+@SQ     SN:chr5 LN:181538259
+@SQ     SN:chr6 LN:170805979
+@SQ     SN:chr7 LN:159345973
+@SQ     SN:chr8 LN:145138636
+@SQ     SN:chr9 LN:138394717
+```
+
+```{bash eval = FALSE}
+samtools view -H star_alignment_output/BJOSKM96hS1.sortedByCoord.bam | head
+Output:
+@HD     VN:1.4  SO:coordinate
+@SQ     SN:chr1 LN:248956422
+@SQ     SN:chr2 LN:242193529
+@SQ     SN:chr3 LN:198295559
+@SQ     SN:chr4 LN:190214555
+@SQ     SN:chr5 LN:181538259
+@SQ     SN:chr6 LN:170805979
+@SQ     SN:chr7 LN:159345973
+@SQ     SN:chr8 LN:145138636
+@SQ     SN:chr9 LN:138394717
+```
+
+
+I will then index the remaining alignment files.
+```{bash, , eval = FALSE}
+samtools index star_alignment_output/BJ48hS2_Aligned.sortedByCoord.out.bam 
+samtools index star_alignment_output/BJ48hS3_Aligned.sortedByCoord.out.bam 
+samtools index star_alignment_output/BJOSKM96HS1.sortedByCoord.bam
+samtools index star_alignment_output/BJOSKM96HS2.sortedByCoord.bam
+samtools index star_alignment_output/BJOSKM96HS3.sortedByCoord.bam
+```
+
+# Part 2 - Alignment QC
+
+After initially attempting to use RseQC in mimicry of the study authors, I eventually resorted to QoRTs given that my GTF appeared incapable of converting to a BED format that could work with RSeQC. From searching online, it seems like Gencode annotations - with how thorough they are, often need to be pre-processed before a successful bedops conversion to .bed format. 
+
+## Running and analyzing QoRTs
+Below is my script for generating all of my QoRTs post-alignment quality control data/plots. 
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=QoRTsQC
+#SBATCH --time=04:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=70G        # Adjust based on your expectation of memory need
+
+mamba activate qorts
+
+# Get the GTF file from the arguments
+gtf_file="${@: -1}"
+
+# Loop over all other arguments, which should be BAM files
+for bam_file in "${@:1:$#-1}"
+do
+    # Extract the sample name from the BAM file name
+    sample_name=$(basename "$bam_file" .bam)
+
+    # Create a directory for the output
+    mkdir -p "${sample_name}_qorts_output"
+
+    # Run qorts with fewer options
+    qorts -Xmx48G QC \ --generatePlots --title "$sample_name" \
+    --addFunctions writeGeneCounts \
+    "$bam_file" "$gtf_file" "${sample_name}_qorts_output"
+done
+```
+
+
+```{bash eval = FALSE}
+chmod +x post_alignment_qc.sh
+sbatch post_alignment_qc.sh star_alignment_output/BJ48hS1.sortedByCoord.bam star_alignment_output/BJ48hS2.sortedByCoord.bam star_alignment_output/BJ48hS3.sortedByCoord.bam star_alignment_output/BJOSKM96hS1.sortedByCoord.bam star_alignment_output/BJOSKM96hS2.sortedByCoord.bam star_alignment_output/BJOSKM96hS3.sortedByCoord.bam gencode.v45.primary_assembly.basic.annotation.gtf 
+```
+
+Although I have already collectively analyzed my FastQC results, running MultiQC on them to see if any of the results would have altered my choice of STAR parameters or made me want to go back and trim adapters, I will include my FastQC results in the final MultiQC report for ease of access.
+
+So, after moving all of my QoRTs and FastQC files into my qc_output directory, I Multiqc them all. The report is output to the directory final_multiqc_dir. 
+```{bash eval = FALSE}
+multiqc qc_output/ -o final_multiqc_dir
+```
+
+My full QoRTs multiplot PDFs, as well as my aggregate MultiQC report, will be on my Github repo. For ease of access, however, and to draw particular attention to them, I will include images of some gene-body coverage, gene assignment diversity, and clipping rate plots below. 
+
+**<u> BJ48h - Sample One</u>**
+
+![](alignment_clipping_sample_1.png "BJ48h - Sample One (BJ48hS1)")
+
+**<u> BJ48h - Sample Two</u>**
+
+![](alignment_clipping_sample_2.png "BJ48h - Sample Two (BJ48hS2)")
+
+**<u> BJ48h - Sample Three</u>**
+
+![](alignment_clipping_sample_3.png "BJ48h - Sample Three (BJ48hS3)")
+
+**<u> BJOSKM96h - Sample One</u>**
+
+![](alignment_clipping_sample_4.png "BJOSKM96h - Sample One (BJOSKM96hS1)")
+
+**<u> BJOSKM96h - Sample Two</u>**
+
+![](alignment_clipping_sample_5.png "BJOSKM96h - Sample Two (BJOSKM96hS2)")
+
+**<u> BJOSKM96h - Sample Three</u>**
+
+![](alignment_clipping_sample_6.png "BJOSKM96h - Sample Three (BJOSKM96hS3)")
+
+I include my clipping rate plots, as (although I was using it mistakenly) BAMQC pinged a slightly alarming result in the prior milestone. In condition one, BJ48h (pre-Yamanaka-factor-induction), sample three is showing slightly better clipping behavior than samples 1 and 2, and my guess for why the rate is so high at read starts is due to the "per-base sequence quality" patterning I identified in my FastQC results earlier. 
+
+In condition two - post-Yamanaka-factor induction - although the differences are again overall negligible, sample two is showing a marginally lower clipping rate across its paired reads than samples one and three. 
+
+**<u> BJ48h - Sample One</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_1.png "Sample One (BJ48hS1)")
+
+**<u> BJ48h - Sample Two</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_2.png "Sample Two (BJ48hS2)")
+
+**<u> BJ48h - Sample Three</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_3.png "Sample Three (BJ48hS3)")
+
+**<u> BJOSKM96h - Sample One</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_4.png "BJOSKM96h - Sample One (BJOSKM96hS1)")
+
+**<u> BJOSKM96h - Sample Two</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_5.png "BJOSKM96h - Sample Two (BJOSKM96hS2)")
+
+**<u> BJOSKM96h - Sample Three</u>**
+
+![](gene_body_coverage_and_gene_assignment_diversity_sample_6.png "BJOSKM96h - Sample Three (BJOSKM96hS3)")
+
+Both across and within conditions, we're seeing fairly homogeneous data. The cumulative gene assignment diversity plots show the general behavior one would expect of well-extracted RNA-seq data, with a small number of genes having a fairly high proportion of the reads (due to expression differences). However, the uniform distribution we might expect of gene body coverage (although this is very rarely the case) is instead U-shaped here. We are therefore seeing both a 5' and 3' bias for reads/alignments.
+
+As aforementioned, I will include my MultiQC report and full QoRTs multiplots for all of my samples in my Github repo. 
+
+# Part 3 - Read count generation and quality control
+
+## featureCounts
+I read a script that performs featureCounts with default parameters (excepting -p and --countReadPairs for paired-end reads) on all of my samples in aggregate. The script is below:
+```{bash eval = FALSE}
+#!/bin/bash -l
+
+#SBATCH --partition=angsd_class
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --job-name=featureCounts
+#SBATCH --time=01:00:00  # Adjust based on your expectation of job runtime
+#SBATCH --mem=10G        # Adjust based on your expectation of memory need
+
+mamba activate angsd
+
+# Path to your annotation file
+annotation_file="${@: -1}"
+
+# Create an array to hold the bam files
+declare -a bam_files
+
+# Loop over all other arguments, which should be BAM files
+for bam_file in "${@:1:$#-1}"
+do
+    # Add the bam file to the array
+    bam_files+=("$bam_file")
+done
+
+# Run featureCounts on all bam files at once
+featureCounts -p --countReadPairs -a $annotation_file -o "featureCountsOutput.counts" "${bam_files[@]}"
+```
+
+I render the featureCounts script executable and run it, downloading the resulting summary and counts file to my local computer for processing in rstudio. 
+```{bash eval = FALSE}
+chmod +x all_samples_featureCounts.sh
+sbatch all_samples_featureCounts.sh star_alignment_output/BJ48hS1.sortedByCoord.bam star_alignment_output/BJ48hS2.sortedByCoord.bam star_alignment_output/BJ48hS3.sortedByCoord.bam star_alignment_output/BJOSKM96hS1.sortedByCoord.bam star_alignment_output/BJOSKM96hS2.sortedByCoord.bam star_alignment_output/BJOSKM96hS3.sortedByCoord.bam gencode.v45.primary_assembly.basic.annotation.gtf
+```
+
+```{r}
+count_summary = read.table("finalFeatureCountsOutput.counts.summary")
+print(count_summary)
+```
+
+## Interpreting the featureCounts summary file
+I clean up the sample names in the "Status" row.
+```{r}
+# Assuming your data is in a dataframe called 'count_summary' and the sample names are in the first row
+
+# Adjust the regular expression to match both BJ48h and BJOSKM96HS sample names
+count_summary[1, -1] <- sapply(count_summary[1, -1], function(x) {
+  # Updated regex to capture BJ48hS# and BJOSKM96HS#
+  matches <- regmatches(x, regexpr("(BJ48hS\\d+|BJOSKM96hS\\d+)", x))
+  return(matches)
+})
+
+# Print the cleaned first row to check
+print(count_summary[1,])
+
+
+```
+
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+# Convert count values to numeric
+count_summary[-1, -1] <- apply(count_summary[-1, -1], 2, as.numeric)
+
+# Reshape data from wide to long format for easier manipulation
+count_long <- pivot_longer(count_summary, cols = -V1, names_to = "Sample", values_to = "Count")
+
+# First, ensure all counts are numeric
+count_long$Count <- as.numeric(count_long$Count)
+
+# Calculate total unassigned by summing all Unassigned categories
+total_unassigned <- count_long %>%
+  filter(V1 != "Status", V1 != "Assigned") %>%
+  group_by(Sample) %>%
+  summarize(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(V1 = "Unassigned")
+
+# Extract assigned reads, ensuring it has the same columns as total_unassigned
+assigned_reads <- count_long %>%
+  filter(V1 == "Assigned") %>%
+  select(Sample, V1, Count)
+
+# Combine Assigned and Total Unassigned reads
+combined_reads <- bind_rows(assigned_reads, total_unassigned)
+
+# Define the mapping from "V" labels to "BJ48hS#" labels
+sample_name_map <- c(V2 = "BJ48hS1", V3 = "BJ48hS2", V4 = "BJ48hS3", V5 = "BJOSKM96hS1", V6 = "BJOSKM96hS2", V7 = "BJOSKM96hS3")
+
+# Plot Assigned vs Unassigned for each sample with correct names in the x-axis
+ggplot(combined_reads, aes(x = factor(Sample, labels = sample_name_map), y = Count, fill = V1)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("Assigned" = "blue", "Unassigned" = "red")) +
+  labs(title = "Assigned vs Unassigned Reads Per Sample", x = "Sample", y = "Read Count") +
+  theme_minimal()
+
+# Calculate total Assigned and Unassigned across all samples
+total_combined <- combined_reads %>%
+  group_by(V1) %>%
+  summarize(Total_Count = sum(Count, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot Assigned vs Unassigned for all samples combined
+ggplot(total_combined, aes(x = V1, y = Total_Count, fill = V1)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("Assigned" = "blue", "Unassigned" = "red")) +
+  labs(title = "Assigned vs Unassigned Reads Across All Samples", x = "Category", y = "Total Read Count") +
+  theme_minimal()
+
+# For the breakdown of Unassigned reads, ensure we exclude zero counts and adjust labels as necessary
+unassigned_details <- count_long %>%
+  filter(V1 != "Status" & V1 != "Assigned" & Count > 0)
+
+
+# Plot for different types of Unassigned reads for each sample with correct names in the x-axis
+ggplot(unassigned_details, aes(x = factor(Sample, labels = sample_name_map), y = Count, fill = V1)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Breakdown of Unassigned Reads per Sample", x = "Sample Status", y = "Read Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+
+
+```
+
+The vast majority of reads are assigned across all samples, with an overall Assigned:Unassigned ratio of ~5:1. Most of the unassigned reads come from "Ambiguity" or "Multimapping", which respectively mean a read mapping to a multi-feature stretch, or a read mapping equally well to multiple features. The first sample of condition one, BJOSKM96hS1, has a peculiarly high number of multimapping reads, however. 
+
+## Processing the featureCounts count table.
+
+```{r}
+library(DESeq2)
+library(ggplot2)
+library(magrittr)
+count_table = read.table("finalFeatureCountsOutput.counts")
+#print(names(count_table))
+print(count_table[1, ])
+```
+
+
+```{r}
+# Extract the first row as the new column names
+new_col_names <- as.character(unlist(count_table[1, ]))
+
+# Modify this line to also capture BJOSKM96HS1 to BJOSKM96HS3
+new_col_names[7:12] <- gsub(".*(BJ48hS[1-3]|BJOSKM96hS[1-3]).*\\.bam", "\\1", new_col_names[7:12])
+
+# Assign the new column names to the data frame
+names(count_table) <- new_col_names
+
+# Remove the first row from the data frame to eliminate the header row now duplicated in the column names
+count_table <- count_table[-1, ]
+
+print(names(count_table))
+
+```
+
+```{r}
+row.names(count_table) = make.names(count_table$Geneid)
+
+cts_gene_sample <- as.matrix(count_table[, -c(1:6)])
+head(cts_gene_sample)
+```
+
+
+
+
+```{r}
+df_coldata <- data.frame(condition = colnames(cts_gene_sample),
+row.names = colnames(cts_gene_sample))
+df_coldata
+```
+
+
+```{r}
+str(df_coldata)
+```
+
+```{r}
+# Convert count data in 'cts_gene_sample' from character to numeric
+cts_gene_sample <- apply(cts_gene_sample, 2, as.numeric)
+
+# Check if there were any NAs introduced by conversion (which would indicate non-numeric values)
+if(any(is.na(cts_gene_sample))) {
+  stop("Conversion introduced NAs, indicating non-numeric values in the count data.")
+}
+
+# Assuming 'df_coldata' and the design formula are correctly specified
+# Try creating the DESeqDataSet object again
+dds_yamanaka <- DESeqDataSetFromMatrix(countData = cts_gene_sample,
+                                         colData = df_coldata,
+                                       rowData =  count_table[,1:6],
+                                         design = ~ condition)
+dds_yamanaka
+```
+
+I check the number of gene counts per sample.
+```{r}
+colSums(counts(dds_yamanaka)) %>% barplot
+```
+```{r}
+dim(dds_yamanaka)
+```
+
+
+```{r}
+keep_genes <- rowSums(counts(dds_yamanaka)) > 0
+dds_yamanaka <- dds_yamanaka[keep_genes, ]
+dim(dds_yamanaka)
+```
+```{r}
+
+conditions <- factor(c("Control", "Control", "Control", 
+                       "96 Hours Post-OSKM", "96 Hours Post-OSKM", "96 Hours Post-OSKM"))
+
+# Update colData with the correct conditions
+colData(dds_yamanaka)$condition <- conditions
+
+levels(dds_yamanaka$condition)
+```
+
+
+
+```{r}
+dds_yamanaka <- estimateSizeFactors(dds_yamanaka) #calculate size factors and add them to the object. 
+dds_yamanaka <- estimateDispersions(dds_yamanaka)
+dds_yamanaka = nbinomWaldTest(dds_yamanaka)
+plot( sizeFactors(dds_yamanaka), colSums(counts(dds_yamanaka)), 
+ylab = "Library sizes", xlab = "Size factors", cex = .6 )
+
+```
+```{r}
+dds_yamanaka
+```
+
+
+```{r}
+# Set up the plotting area to accommodate two plots side by side
+par(mfrow=c(1,2)) 
+
+# Extract sample names from the DESeq2 object
+sample_names <- colnames(counts(dds_yamanaka))
+
+# Box plot of non-normalized counts
+boxplot(log2(counts(dds_yamanaka) + 1), notch=TRUE,
+        main="Non-normalized read counts",
+        ylab="log2(read counts)", 
+        names=sample_names, # Add sample names as x-axis labels
+        cex.axis=0.6, # Adjust size of axis labels if necessary
+        las=2) # Rotate x-axis labels to make them vertical
+
+# Box plot of size-factor normalized values
+boxplot(log2(counts(dds_yamanaka, normalized=TRUE) + 1), notch=TRUE,
+        main="Size-factor-normalized read counts",
+        ylab="log2(read counts)", 
+        names=sample_names, # Add sample names as x-axis labels
+        cex.axis=0.6, # Adjust size of axis labels if necessary
+        las=2) # Rotate x-axis labels to make them vertical
+
+```
+
+The difference post-normalization does not appear extremely significant, but it does help bring the mean log-transformed read counts of the two conditions closer to one another. 
+
+For ease of access, I produce a log-transformed counts matrix and a log-transformed normalized counts matrix that I will include within my assays of my greater DESeq2 object.
+```{r}
+assay(dds_yamanaka, "log_counts") <- log2(counts(dds_yamanaka, normalized = FALSE) + 1)
+#Log-normalized read counts
+assay(dds_yamanaka, "log_norm_counts") <- log2(counts(dds_yamanaka, normalized=TRUE) + 1)
+```
+
+Within each condition amongst the technical replicates, I'll now make a scatterplot of my log normalized counts against one another to ensure that the samples' gene values highly correlate. 
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+
+# Assuming 'dds_yamanaka' is already your DESeq2 object and log_norm_counts are already calculated
+sample_names <- colnames(dds_yamanaka)
+
+# Define groups based on conditions
+condition1 <- grep("BJ48hS", sample_names, value = TRUE)
+condition2 <- grep("BJOSKM96hS", sample_names, value = TRUE)
+
+# Function to plot each condition's sample pairs
+plot_samples <- function(samples, condition_label) {
+  if (length(samples) < 2) {
+    cat(sprintf("Not enough samples to plot for condition %s\n", condition_label))
+    return()  # Skip plotting if less than two samples
+  }
+  
+  # Setup the plotting area
+  par(mfrow = c(1, choose(length(samples), 2)))
+  
+  # Generate combinations and plot
+  combn(samples, 2, function(pair) {
+    dds_yamanaka[, pair] %>%
+      assay("log_norm_counts") %>%
+      { plot(x = .[,1], y = .[,2], xlab = pair[1], ylab = pair[2], pch = 20, cex = .1, 
+             main = paste(pair[1], "vs", pair[2], "\nCondition:", condition_label)) }
+  }, simplify = FALSE)
+}
+
+# Perform the plotting for each condition
+plot_samples(condition1, "BJ48hS")
+plot_samples(condition2, "BJOSKM96h")
+
+```
+
+From the fanning out in the bottom left corner of all of the sample plots, we are seeing the standard behavior of expression level standard deviation depending upon the mean, where genes with low read counts exhibit high variance. 
+
+
+I use VST to help mitigate our heteroskedasticity. I know that rlog was recommended in class as being better optimized for RNA-seq read counts, but it was repeatedly crashing my R session (this is presumably due to my high read count samples). Reading up on the documentation, the "blind" parameter should be set to false if you expected large transcriptional differences between your conditions. Could you guys give me some feedback on this one? The Yamanaka factors (as you'll see in my PCA below) are fairly transcriptionally transformative, but I don't know what exactly qualifies as "large."
+```{r}
+# Load necessary library
+library(DESeq2)
+
+# Compute the Variance Stabilizing Transformation (VST)
+vst_dds <- vst(dds_yamanaka, blind = FALSE)
+
+# Define groups based on conditions
+sample_names <- colnames(vst_dds)
+condition1 <- grep("BJ48hS", sample_names, value = TRUE)
+condition2 <- grep("BJOSKM96hS", sample_names, value = TRUE)
+
+# Function to plot each condition's sample pairs
+vst_plot_samples <- function(samples, condition_label) {
+  if (length(samples) < 2) {
+    cat(sprintf("Not enough samples to plot for condition %s\n", condition_label))
+    return()  # Skip plotting if less than two samples
+  }
+  
+  # Setup the plotting area
+  par(mfrow = c(1, choose(length(samples), 2)))
+  
+  # Generate combinations and plot
+  combn(samples, 2, function(pair) {
+    data_matrix <- assay(vst_dds[, pair])
+    plot(x = data_matrix[,1], y = data_matrix[,2], xlab = pair[1], ylab = pair[2], pch = 20, cex = 0.1, 
+         main = paste(pair[1], "vs", pair[2], "\nCondition:", condition_label))
+  }, simplify = FALSE)
+}
+
+# Perform the plotting for each condition
+vst_plot_samples(condition1, "BJ48hS")
+vst_plot_samples(condition2, "BJOSKM96h")
+
+
+
+```
+
+VST tightens up the variance significantly at lower expression levels, but not quite so much as rlog did in some of the in-class examples. We see more overall variability amongst the pre-OSKM BJ48h samples. 
+
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(pheatmap)
+
+# Assuming 'vst_dds' is your DESeq2 object with VST data already computed
+# First, get the VST data as a matrix
+vst_matrix <- assay(vst_dds)
+
+# Calculate Pearson correlation coefficient matrix
+corr_coeff <- cor(vst_matrix, method = "pearson")
+
+# Ensure the row and column names of the correlation matrix are set to sample names
+rownames(corr_coeff) <- colnames(vst_dds)
+colnames(corr_coeff) <- colnames(vst_dds)
+
+# Convert correlation coefficients to a distance matrix
+distance_matrix <- as.dist(1 - corr_coeff)
+
+# Create a heatmap using pheatmap
+pheatmap::pheatmap(distance_matrix,
+                   main = "Pearson correlation",
+                   color = colorRampPalette(c("blue", "white", "red"))(255),  # Color gradient from blue to red
+                   clustering_distance_rows = distance_matrix,
+                   clustering_distance_cols = distance_matrix,
+                   labels_row = rownames(corr_coeff),
+                   labels_col = colnames(corr_coeff),
+                   treeheight_row = 0,
+                   show_rownames = TRUE,
+                   show_colnames = TRUE,
+                   fontsize_row = 10,
+                   fontsize_col = 10,
+                   border_color = NA)  # No border between cells
+
+```
+
+I can't for the life of me get labels to successfully show here, despite rejigging font size, other arguments, and adjusting the plot size in case my labels were getting squished and then excluded. My samples, from top-to-bottom and left-to-right, go from BJ48hS1 to BJOSKM96hS3. 
+
+From the heatmap, the two conditions very clearly separate from one another. We appear to be seeing more internal variation amongst the pre-yamanaka BJ48h condition, as well, with that condition's first sample differing the most from the other two. This is also in keeping with the intra-sample autocorellation plots we illustrated earlier, where we were seeing more expression variability in the pre-Yamanaka rather than post-Yamanaka conditon. 
+
+```{r}
+rv <- rowVars(vst_matrix)
+top_variable <- order(rv, decreasing = TRUE)[seq_len(500)]
+pca <- prcomp(t(vst_matrix[top_variable, ]))
+head(pca$x)
+
+```
+
+```{r}
+plotPCA(vst_dds) +
+labs(color=NULL) +
+theme_bw()
+```
+
+Collectively, our two principal components (done almost entirely by PC1), capture 96% of the total variance across samples in the top 500 variable genes. Again, we get an extremely clear across-condition separation, but we are interestingly seeing the third sample of the pre-yamanaka condition separating from the other two. 
+
+However, when considering the fact that the second principal component - our y-axis, here - explains only 2% of the top 500 genes' variance, we should put much more weight in x-plane rather than y-plane variation as meaningfully demarcating expressional differences. Nonetheless, it is something to pay attention to as I move forward with my analysis. 
+
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(tidyverse)
+
+# Read the transcription factor list CSV (update path as necessary)
+tf_list <- read.csv("Human Transcription Factor List.csv")
+
+# Filter for confirmed transcription factors
+confirmed_tfs <- tf_list %>%
+  filter(`Is.TF.` == "Yes") %>%
+  pull(`Ensembl.ID`)
+
+print(length(confirmed_tfs))
+```
+
+```{r}
+colData(dds_yamanaka)
+```
+
+I have two options. I can transfer sizeFactors, and thus normalize my gene counts, as calculated for the whole gene set to my TF subset. Testing, then, will effectively ask about changes of Transcription Factors relative to the overall transcriptome. Or, I can recompute size factors for my TF subset, and normalize to just the size of the human TF dataset. My testing, then, will more ask question about compositional changes among purely Transcription Factors themselves. 
+
+For a variety of reasons, like TFs short half lives, bursty expression, and non-ubiquity expression, this TF-only normalization could invite a fair bit of noise. Additionally DESeq2's outlier-handling is not necessarily built to handle the possibility of a small number of TFs being expressed very highly, and this could make everything else look downregulated in comparison. But, for both educational purposes and my own curiosity, I will do a short exploratory analysis of the effects of normalizing to the TF subset, specifically. This involves subsetting from my total-gene-set DESeq2 object, and then recomputing size factors and getting results from this new DESeq2 object. 
+
+```{r}
+# Remove version numbers from the rownames of dds_yamanaka
+rownames(dds_yamanaka) <- gsub("\\..*", "", rownames(dds_yamanaka))
+
+# Filter dds_yamanaka for TFs
+tf_dds <- dds_yamanaka[rownames(dds_yamanaka) %in% confirmed_tfs, ]
+
+tf_dds
+
+```
+
+
+90 of the transcription factors from the Lambert human TF list do not manifest in my TF DESeq2 object, presumably due to my having filtered out zero count genes (for both conditions) earlier. So I will be evaluating differential expression for 1549 transcription factors. 
+
+```{r}
+# Check if tf_dds has any transcription factors
+if (nrow(tf_dds) == 0) {
+    stop("No matching transcription factors found.")
+} else {
+
+    # Compute the Variance Stabilizing Transformation (VST)
+    vst_tf <- vst(tf_dds, blind = FALSE)
+    assay(tf_dds, "vst") <- assay(vst_tf)
+}
+```
+
+
+```{r}
+plotPCA(vst(tf_dds))
+```
+
+This plot, besides the ultimate hubris of not subsetting directly from a results object of dds_yamanaka, is useful. Knowing how much TFs contribute to overall expression can give us a sense of whether or not focusing exclusively on them would require specialized processing, and hwo much expression stability can be expected from them.
+```{r}
+# Calculate total counts per sample in the original dataset
+total_counts_all_genes <- colSums(counts(dds_yamanaka))
+
+# Calculate total counts per sample for just transcription factors
+total_counts_tfs <- colSums(counts(tf_dds))
+
+# Calculate the fraction of counts from TFs
+fraction_tfs <- total_counts_tfs / total_counts_all_genes
+
+# Print the fraction of counts from TFs
+print(fraction_tfs)
+
+# Create a barplot of the fraction of counts from TFs
+barplot(fraction_tfs, 
+        main = "Fraction of Counts from Transcription Factors", 
+        ylab = "Fraction", 
+        xlab = "Samples", 
+        col = "blue", 
+        las = 2)  # Adjust label orientation if necessary
+
+```
+The fraction of all counts per sample that are coming from human transcriptions factors ranges from 4.99% to 6.09%. 
+
+
+Following Merv's advice from Piazza, I want to evaluate how my size factors change from the original ones for the entire gene set, versus recomputed ones for just my 1,549 human transcription factors.
+
+```{r}
+sizeFactors(dds_yamanaka)
+```
+
+```{r}
+sizeFactors(tf_dds)
+```
+
+```{r}
+# Create a copy of the original DESeq2 object
+tf_dds_copy <- tf_dds
+
+# Recalculate size factors for just the transcription factors
+tf_dds_copy <- estimateSizeFactors(tf_dds_copy)
+
+sizeFactors(tf_dds_copy)
+```
+
+```{r}
+# Extract size factors
+original_size_factors <- sizeFactors(tf_dds)
+new_size_factors <- sizeFactors(tf_dds_copy)
+
+# Create a plot for comparison
+plot(original_size_factors, new_size_factors, 
+     xlab = "Original Size Factors",
+     ylab = "New Size Factors for TFs",
+     main = "Comparison of Size Factors",
+     pch = 19, col = "blue")
+abline(0, 1, col = "red")  # Add a y=x line to aid in visual comparison
+
+```
+ The $x = y$ line here represents where points would fall if we observed no size factor change. The first three (reading from left to right) dots represent my pre-Yamanaka samples, and the last three represent my post-Yamanaka samples. The pre-yamanaka size factors decrease, as compared to the original, and the post-ones increase. 
+
+My concern is that a small number of TFs, expressed highly enough, could make everything else look down-regulated unfairly. So I use Cook's distance, which measures the influence of each TF gene on the computed size factors, to see if I have any serious outliers shifting the balance of my normalization.
+
+```{r}
+# Calculate contributions of each gene to total counts
+total_counts_per_sample <- colSums(counts(tf_dds))
+gene_contributions <- sweep(counts(tf_dds), 2, total_counts_per_sample, "/")
+average_contributions <- rowMeans(gene_contributions)
+
+# Plot these contributions to identify potential outliers
+barplot(sort(average_contributions, decreasing = TRUE), 
+        main = "Contribution of Transcription Factors to Library Size",
+        xlab = "Transcription Factors", ylab = "Average Contribution",
+        las = 2, col = "blue")
+
+```
+
+```{r}
+
+# Calculate Cook's distances for each gene
+dds_fit <- DESeq(tf_dds_copy, fitType="mean")
+cooks_distances <- assays(dds_fit)[["cooks"]]
+mean_cooks <- rowMeans(cooks_distances, na.rm = TRUE)
+
+# Plot Cook's distances to identify highly influential genes
+plot(mean_cooks, type='h', 
+     main="Cook's Distance for Transcription Factors",
+     xlab="Transcription Factor Index", ylab="Cook's Distance",
+     col="red")
+
+```
+Purely visually, we can see that two to three different transcription factor genes have vastly higher Cook's Distance scores than the rest.
+
+
+```{r}
+# Determine the 99th percentile threshold for Cook's distance
+threshold_cooks <- quantile(mean_cooks, 0.99)
+
+# Identify TFs whose Cook's distance exceeds the 95th percentile
+high_influence_tfs <- names(mean_cooks)[mean_cooks > threshold_cooks]
+
+# Report Cook's distances for these TFs
+high_influence_cooks <- mean_cooks[high_influence_tfs]
+
+# Create a named vector to display results more clearly
+results <- setNames(high_influence_cooks, high_influence_tfs)
+
+# Print the results
+print(results)
+```
+Setting a 99th percentile cutoff, we see that, even among the top 1th percentile of influential TF genes, we are seeing one TF (ENSG00000168874/ATOH8), that contributes almost 4 times more to size factor calculation than the bottom of this quantile.
+
+I am deciding that this is enough evidence for not redoing normalization with size factors specific to just the TF genes. I will adjust my p-values in my transcription factor DESeq2 object to just reflect the sample size of the TF gene counts, however. This will happen automatically through the results() function, setting Independent Filtering = TRUE. 
+
+
+```{r}
+all_results <- results(dds_yamanaka, contrast=c("condition", "96 Hours Post-OSKM", "Control"))
+
+```
+
+
+```{r}
+# Remove version numbers from the rownames
+rownames(dds_yamanaka) <- gsub("\\..*", "", rownames(dds_yamanaka))
+
+# Subset the results to include only transcription factors
+tf_results <- all_results[rownames(all_results) %in% confirmed_tfs,]
+```
+
+
+I originally used Benjamini-Hochberg, and while the Yamanaka factors are renownedly transcriptionally transformative, and I thus expect highly differential expression, My general prior is not quite so high as 50% of TFs showing significantly differential expression. Especially given the fact that this is not a case and control, per se, but progression through a condition. 
+
+```{r}
+# Recompute p-adjustment only for the subset of transcription factors
+tf_results$padj <- p.adjust(tf_results$pvalue, method = "holm")
+
+```
+
+```{r}
+# Print the top rows to check significant transcription factors
+head(tf_results[order(tf_results$padj),])
+
+
+```
+
+I will illustrate some overall differential gene expression analysis of the two conditions, before delving into specific GO term enrichment analysis 
+
+```{r}
+summary(tf_results)
+```
+```{r}
+length(tf_results$padj)
+```
+
+```{r}
+table(tf_results$padj < 0.05)
+```
+Even with the relative stringency of the Holm-Bonferroni correction, we are still observing 17.7% of our TFs as being significantly differentially expressed. 
+
+
+```{r}
+tf_results$padj %>%
+hist(breaks=19, main="Adjusted p-values for control vs 96h after OSKM Induction")
+```
+
+```{r}
+tf_results_sorted <- tf_results %>% `[`(order(.$padj),)
+
+library(org.Hs.eg.db)
+all_genes <- keys(org.Hs.eg.db, keytype = "ENSEMBL")
+symbols <- mapIds(org.Hs.eg.db, keys = all_genes, column = "SYMBOL", keytype = "ENSEMBL", multiVals = "first")
+# Also, retrieve ORF names (if available)
+orfs <- mapIds(org.Hs.eg.db, keys = all_genes, column = "REFSEQ", keytype = "ENSEMBL", multiVals = "first")
+
+# Add gene symbols or use ENSEMBL ID as fallback
+tf_results_sorted$gene_symbol_or_ORF <- ifelse(!is.na(symbols[rownames(tf_results_sorted)]), symbols[rownames(tf_results_sorted)], orfs[rownames(tf_results_sorted)])
+tf_results_sorted$ORF <- orfs[rownames(tf_results_sorted)]  # Add ORFs as a separate column
+
+head(tf_results_sorted)
+```
+
+
+I checked the number of coefficients, and found intercept and my condition comparison. 
+```{r}
+shrunk_tf_results = lfcShrink(dds_yamanaka, coef=2, type = "apeglm")
+
+# Subset the results to include only transcription factors
+shrunk_tf_results <- all_results[rownames(shrunk_tf_results) %in% confirmed_tfs,]
+
+# Recompute p-adjustment only for the subset of transcription factors
+shrunk_tf_results$padj <- p.adjust(shrunk_tf_results$pvalue, method = "holm")
+
+# Add gene symbols or use ENSEMBL ID as fallback
+shrunk_tf_results$gene_symbol_or_ORF <- ifelse(!is.na(symbols[rownames(shrunk_tf_results)]), symbols[rownames(shrunk_tf_results)], rownames(shrunk_tf_results))
+
+# Sort shrunk results
+shrunk_tf_results_sorted <- shrunk_tf_results %>% `[`(order(.$padj),)
+
+shrunk_tf_results_sorted$gene_symbol_or_ORF <- ifelse(!is.na(symbols[rownames(shrunk_tf_results_sorted)]), symbols[rownames(shrunk_tf_results_sorted)], orfs[rownames(shrunk_tf_results_sorted)])
+shrunk_tf_results_sorted$ORF <- orfs[rownames(shrunk_tf_results_sorted)]  # Add ORFs as a separate column
+
+head(shrunk_tf_results_sorted)
+```
+
+We see the expected pattern manifesting, finding more differentially expressed genes as we move towards the right hand of the plot, where we find more strongly expressed genes. 
+```{r}
+plotMA(shrunk_tf_results_sorted, alpha=0.05,
+main="LFC Shrunk MA Plot")
+```
+
+```{r}
+library(EnhancedVolcano)
+
+# Handling p-values of 0 by adjusting to a small number if necessary
+shrunk_tf_results_sorted$padj[shrunk_tf_results_sorted$padj == 0] <- min(shrunk_tf_results_sorted$padj[shrunk_tf_results_sorted$padj > 0], na.rm = TRUE) * 10^-1
+
+# Updated EnhancedVolcano call
+vp2 <- EnhancedVolcano(shrunk_tf_results_sorted,
+                       lab = shrunk_tf_results_sorted$gene_symbol_or_ORF,
+                       x = 'log2FoldChange',
+                       y = 'padj',
+                       pCutoff = 0.05,
+                       FCcutoff = 1.5,  # Log2 fold change cutoff
+                       title = "Volcano Plot with logFC shrinkage",
+                       subtitle = "Highlighting significant changes",
+                       col=c('grey30', 'grey30', 'red', 'blue'),  # Colors: non-significant, significant
+                       labSize = 3.0,
+                       pointSize = c(1.5),  # Ensure this matches the data size; might need adjustment
+                       xlim = c(-5, 10))
+
+# Print the plot
+print(vp2)
+```
+
+I look for the top five most positively (higher expression in the 96 hour sample) and negatively expressed genes (lower expression in the 96 hour sample), and report their expression values. 
+```{r}
+# Selecting the top ten most significant genes
+top_ten_genes <- head(shrunk_tf_results_sorted, 10)
+
+# Displaying the gene symbols, log fold changes, and adjusted p-values of the top ten genes
+top_ten_summary <- top_ten_genes[, c("gene_symbol_or_ORF", "log2FoldChange", "padj")]
+print(top_ten_summary)
+
+```
+I plot the normalized counts of these top ten TF genes for my two conditions alongside one another, to get a sense of absolute expression values beyond LFC. 
+
+```{r}
+# Setup plotting parameters
+par(mfrow=c(1, 2))  # 1 row, 2 columns
+par(mar=c(4, 4, 2, 1))  # Margins on the bottom, left, top, and right of each plot
+
+gene_ids = rownames(top_ten_genes)
+# Iterate over gene_ids, which should correspond to rownames in top_ten_genes
+for (i in seq_along(gene_ids)) {
+  gene_id <- gene_ids[i]
+  gene_symbol <- top_ten_genes$gene_symbol_or_ORF[gene_id]  # Correct indexing
+
+  plot_title <- paste("Counts for", gene_symbol)
+
+  # Plot counts for this gene
+  plotCounts(dds_yamanaka, gene=gene_id, intgroup="condition", normalized=TRUE, main=plot_title)
+
+  # Check if it's time to move to a new page after every two plots
+  if (i %% 2 == 0 || i == length(gene_ids)) {
+    # This resets the plotting parameters and is necessary only if plotting to a PDF or similar
+    # dev.new()  # Uncomment for multi-page PDFs
+  }
+}
+```
+```{r}
+# Assuming shrunk_tf_results_sorted is already sorted by significance
+# Filter for significant results and separate positives and negatives
+significant_genes <- shrunk_tf_results_sorted[shrunk_tf_results_sorted$padj < 0.05, ]
+
+# Top ten positive log2 fold changes
+top_ten_positive <- head(significant_genes[order(significant_genes$log2FoldChange, decreasing = TRUE),], 10)
+
+# Top ten negative log2 fold changes
+top_ten_negative <- head(significant_genes[order(significant_genes$log2FoldChange, decreasing = FALSE),], 10)
+
+# Combine the lists for plotting
+top_genes_combined <- rbind(top_ten_positive, top_ten_negative)
+
+```
+
+
+```{r}
+# Setup the plotting parameters for five plots per display
+par(mfrow=c(1, 5))  # 1 row, 5 columns
+
+# Iterate over the gene list and plot normalized counts
+plot_gene_counts <- function(genes_df) {
+  for (i in 1:nrow(genes_df)) {
+    gene_id <- rownames(genes_df)[i]
+    gene_symbol <- genes_df$gene_symbol_or_ORF[i]
+    direction <- ifelse(genes_df$log2FoldChange[i] > 0, "Upregulated", "Downregulated")
+
+    plot_title <- paste(direction, gene_symbol, sep=": ")
+
+    # Plot counts for this gene
+    plotCounts(dds_yamanaka, gene=gene_id, intgroup="condition", normalized=TRUE, main=plot_title)
+
+    # Refresh the plotting device after every five plots or at the end of the list
+    if (i %% 5 == 0 || i == nrow(genes_df)) {
+      # This ensures a new image starts if there are more genes to plot
+      if (i != nrow(genes_df)) {
+
+      }
+    }
+  }
+}
+
+# Run the plotting function for the top ten positive log fold changes
+cat("Displaying Upregulated Transcription Factors:\n")
+plot_gene_counts(top_ten_positive)
+
+
+par(mfrow=c(1, 5))  # Setup for new series of plots
+cat("Displaying Downregulated Transcription Factors:\n")
+plot_gene_counts(top_ten_negative)
+
+
+
+```
+By plotting the top ten downregulated TF genes from the control to the 96 hour condition and the top ten positive, I didn't mean to equate the overall impression of TF up-versus-down-regulation we see in this comparison. As made clear in both the volcano plot and the list of the top ten overall most significantly differentially enriched genes, there are more cases of high L2FC, high significance genes than low L2FC, high significance genes. However, I'd like to assess gene ontology enrichment for the two categories, to see if we can get a general impression of - assuming that we are seeing signal and not merely the noise of TF's erratic transcriptomic patterning - what cellular processes the Yamanaka factors are promoting/inhibiting. 
+
+I will also make some GO visualizations for the entire set of positive L2FC, statistically significant, 96-hour-sample-enriched genes, and the entire set of negative L2FC, statistically signficant, untreated_fibroblast-enriched genes. 
+
+I begin with the larger sets. 
+```{r}
+library(dplyr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(ggplot2)
+
+# Convert DESeqResults to a standard data frame first
+shrunk_tf_results_df <- as.data.frame(shrunk_tf_results_sorted)
+
+# Extract all significant genes with positive and negative log2FoldChanges
+all_positive_genes <- shrunk_tf_results_df %>%
+                      filter(padj < 0.05 & log2FoldChange > 0) %>%
+                      pull(gene_symbol_or_ORF)
+
+all_negative_genes <- shrunk_tf_results_df %>%
+                      filter(padj < 0.05 & log2FoldChange < 0) %>%
+                      pull(gene_symbol_or_ORF)
+
+# Convert gene symbols to ENTREZ IDs (if your data uses gene symbols)
+positive_entrez <- bitr(all_positive_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+negative_entrez <- bitr(all_negative_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+```
+
+```{r}
+# Perform GO enrichment analysis
+ego_pos <- enrichGO(gene          = positive_entrez$ENTREZID,
+                    OrgDb         = org.Hs.eg.db,
+                    keyType       = "ENTREZID",
+                    ont           = "BP",
+                    pAdjustMethod = "holm",
+                    qvalueCutoff  = 0.05)
+
+ego_neg <- enrichGO(gene          = negative_entrez$ENTREZID,
+                    OrgDb         = org.Hs.eg.db,
+                    keyType       = "ENTREZID",
+                    ont           = "BP",
+                    pAdjustMethod = "holm",
+                    qvalueCutoff  = 0.05)
+
+```
+
+```{r}
+# Visualize with a dotplot
+dotplot(ego_pos) + ggtitle("GO Enrichment for All Positive Genes")
+dotplot(ego_neg) + ggtitle("GO Enrichment for All Negative Genes")
+
+```
+
+```{r}
+# Visualize with a cnetplot
+cnetplot(ego_pos, foldChange=positive_entrez$log2FoldChange) + ggtitle("Enrichment Map for All Positive Genes")
+cnetplot(ego_neg, foldChange=negative_entrez$log2FoldChange) + ggtitle("Enrichment Map for All Negative Genes")
+
+```
+
+```{r}
+# Bar plot of GO terms
+barplot(ego_pos, showCategory=10) + ggtitle("Top GO Terms for All Positive Genes")
+barplot(ego_neg, showCategory=10) + ggtitle("Top GO Terms for All Negative Genes")
+
+```
+
+```{r}
+# Extract ENSEMBL gene IDs or gene symbols
+positive_genes <- as.character(top_ten_positive$gene_symbol_or_ORF)
+negative_genes <- as.character(top_ten_negative$gene_symbol_or_ORF)
+
+```
+```{r}
+# Convert gene symbols to ENTREZ IDs if necessary
+positive_entrez <- bitr(positive_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+negative_entrez <- bitr(negative_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+# Perform GO enrichment analysis
+ego_pos_ten <- enrichGO(gene          = positive_entrez$ENTREZID,
+                    OrgDb         = org.Hs.eg.db,
+                    keyType       = "ENTREZID",
+                    ont           = "BP",  # Biological Process
+                    pAdjustMethod = "holm",
+                    qvalueCutoff  = 0.05)
+
+ego_neg_ten <- enrichGO(gene          = negative_entrez$ENTREZID,
+                    OrgDb         = org.Hs.eg.db,
+                    keyType       = "ENTREZID",
+                    ont           = "BP",
+                    pAdjustMethod = "holm",
+                    qvalueCutoff  = 0.05)
+
+```
+
+```{r}
+# Visualize with a dotplot
+dotplot(ego_pos_ten) + ggtitle("GO Enrichment for Top 10 Positive Genes")
+dotplot(ego_neg_ten) + ggtitle("GO Enrichment for Top 10 Negative Genes")
+
+```
+```{r}
+# Visualize with a cnetplot
+cnetplot(ego_pos_ten, foldChange=positive_entrez$log2FoldChange) + ggtitle("Enrichment Map for Top 10 Positive Genes")
+cnetplot(ego_neg_ten, foldChange=negative_entrez$log2FoldChange) + ggtitle("Enrichment Map for Top 10 Negative Genes")
+
+```
+
+```{r}
+# Bar plot of GO terms
+barplot(ego_pos_ten, showCategory=10) + ggtitle("Top GO Terms for Top 10 Positive Genes")
+barplot(ego_neg_ten, showCategory=10) + ggtitle("Top GO Terms for Top 10 Negative Genes")
+
+```
+
+```{r}
+# Assuming 'ego_pos' is your enrichGO result for all positive genes
+ego_pos_data <- as.data.frame(ego_pos)
+revigo_input_pos <- ego_pos_data[, c("ID", "p.adjust")]
+
+# Write this data to a CSV file for uploading to REVIGO
+write.csv(revigo_input_pos, "revigo_input_pos.csv", row.names = FALSE)
+
+# Assuming 'ego_pos_ten' is your enrichGO result for the top ten positive genes
+ego_pos_ten_data <- as.data.frame(ego_pos_ten)
+revigo_input_pos_ten <- ego_pos_ten_data[, c("ID", "p.adjust")]
+
+# Write this data to a CSV file for uploading to REVIGO
+write.csv(revigo_input_pos_ten, "revigo_input_pos_ten.csv", row.names = FALSE)
+
+# Assuming 'ego_neg' is your enrichGO result for all negative genes
+ego_neg_data <- as.data.frame(ego_neg)
+revigo_input_neg <- ego_neg_data[, c("ID", "p.adjust")]
+
+# Write this data to a CSV file for uploading to REVIGO
+write.csv(revigo_input_neg, "revigo_input_neg.csv", row.names = FALSE)
+
+# Assuming 'ego_neg_ten' is your enrichGO result for the top ten negative genes
+ego_neg_ten_data <- as.data.frame(ego_neg_ten)
+revigo_input_neg_ten <- ego_neg_ten_data[, c("ID", "p.adjust")]
+
+# Write this data to a CSV file for uploading to REVIGO
+write.csv(revigo_input_neg_ten, "revigo_input_neg_ten.csv", row.names = FALSE)
+
+
+```
+
+
+
+
+I screenshot the revigo reduced ontology results, and include them below.
+
+
+
+**Revigo Treemap of all significant positive LFC genes, enriched in the 96 hour condition:**
+
+![](all_pos_treemap.png)
+We're seeing some intuitive GO categories, like stem cell population maintenance, but some unexpected ones, like cell fate commitment. Many GO terms indicate TFs that help "regulate" other processes. We don't know whether this is positive or negative regulation, so Revigo in general may yield slightly more inscrutible results with Transcription Factors, given that their annotations in general are not as clear as, say, a protein-encoding gene. 
+
+**Revigo Treemap of all significant negative LFC genes, enriched in the untreated fibroblast condition:**
+
+![](all_neg_treemap.png)
+The "aquamarine"embryonic organ development" semantic group, which very much dominates the GO composition, is aggregating developmental/cell differentiation processes, for the most part. This is very much as to be expected if the trajectory of Yamanaka factor induction is meant to take a fibroblast from differentiated to stem-like. 
+
+
+**Revigo Treemap of top ten most significant positive LFC OSKM-treatment-enriched genes:**
+
+![](pos_ten_treemap.png)
+
+**Revigo Treemap of top ten most significant negative LFC untreated-fibroblast-enriched genes:**
+
+Gastrulation is a crucial phase early in the embryonic development of animals, during which the single-layered blastula is reorganized into a multilayered structure known as the gastrula. It's essentially the process by which the embryo transforms from a simple spherical ball of cells into a structure with multiple layers and a defined axis, which will give rise to distinct tissues and organs. Figuring this out, and seeing this so enriched in the most significantly upregulated genes in the whole TF dataset, confused me at first. This is a process by which embryos transform out of their initial shape, which made me immediately assume that it was more in the category of cell fate determination and differentiation. However, given that the Yamanaka factors revert differentiated cells back to iPSCs in a continuous manner, it makes sense that we'd see an enrichment for embryonic traits - even if the phenotypes they describe transition embryos away from their embryonic-ness. 
+
+![](neg_ten_treemap.png)
+This group is small enough that Revigo is not spectacularly enlightening, but the single largest GO term being downregulated is cell fate commitment, further in-keeping with our intuitions. Interestingly, however, "cell fate commitment" ontologies are listed very prominently amongst the top ten most significantly untreated-fibroblast-enriched genes. Yet it's also a sizable ontology among the greater set of 96-hour-enriched genes. I can imagine, however, how cells becoming more stem-like could involve downregulating TFs that help preserve a current cell fate trajectory *and* upregulating TFs that have to be more active in steering a more embryonic cell towards an ultimate cell fate (and are thus markers of a more stem-like cell).
+
+I manually pored through the different counts assays in my TF-filtered and unfiltered DESeq objects to ensure that counts were properly copied over. 
+
+I now load a table from the supplementary information of the paper I have referenced, that includes information that will be the basis for constructing the transcription factor categories that I want to perform gene ontology and pathway analyses on. Following the lead of the study authors, I will be defining five transcription factor subcategories:
+
+1. The TF upreprogramome refers to transcription factors that have to be upregulated in the fibroblast for pluripotency induction.
+
+2. The TF downreprogramome, with my data then, refers to fibroblast-enriched and specific transcriptional factors that have to be downregulated for pluripotency. 
+
+
+```{r}
+library(readxl)
+data <- read_excel("paper_log_fold_table.xlsx")
+print(paste0("The length of my metadata table is ",nrow(data)))
+
+```
+
+
+```{r}
+# Assuming the columns are named exactly as "ensembl", "log2FoldChange", "padj", "Fibroblast_mean", and "ESC_mean" in the Excel file.
+selected_data <- data %>%
+  select(ensembl, log2FoldChange, padj, Fibroblast_mean, ESC_mean)
+
+```
+
+```{r}
+head(selected_data)
+print(paste0("The length of my metadata table is ",nrow(selected_data)))
+
+```
+Going off of the criteria defined in the paper that evaluates log2fold change in expression differences between a human ESCs and the pre-OSKM fibroblast samples that I am analyzing, as well as the mean gene counts for every TF gene from the fibroblast and hESC samples, I subset the data into the upreprogramome, downreprogramome, and unresponsome. These, respectively, are each a list of transcription factors that have to be upregulated, downregulated, or unaffected by Yamanaka transduction for their transcriptome to resemble an iPSC rather than a fibroblast. 
+
+```{r}
+# Assuming selected_data is already loaded and is a dataframe
+
+# Load the necessary library
+library(dplyr)
+
+# Ensure that log2FoldChange and padj are numeric
+selected_data <- selected_data %>%
+  mutate(
+    log2FoldChange = as.numeric(as.character(log2FoldChange)),
+    padj = as.numeric(as.character(padj))
+  ) %>%
+  # Handle NAs that may have been introduced by coercion
+  filter(!is.na(log2FoldChange) & !is.na(padj))
+
+# Define the thresholds
+active_threshold <- 50
+fold_change_threshold <- 2
+q_value_threshold <- 0.01
+
+upreprogramome <- selected_data %>%
+  filter(ESC_mean > active_threshold, log2FoldChange > fold_change_threshold,
+         padj < q_value_threshold)
+
+downreprogramome <- selected_data %>%
+  filter(Fibroblast_mean > active_threshold, log2FoldChange < -fold_change_threshold,
+         padj < q_value_threshold)
+
+
+cat("Upreprogramome:", nrow(upreprogramome), "\n")
+cat("Downreprogramome:", nrow(downreprogramome), "\n")
+
+
+```
+
+A fairly in-depth GO analysis of these different 'omes has already been done in the original paper. I am more interested, however, in how exactly the GO composition shifts post-induction. Do different types of TFs shift toward stemness at around the same time? 
+
+
+```{r}
+library(fgsea)
+
+
+upreprogramome_genes <- upreprogramome$ensembl
+downreprogramome_genes <- downreprogramome$ensembl
+
+
+# Create a list of gene sets for GSEA
+gene_sets <- list(
+  Upreprogramome = upreprogramome_genes,
+  Downreprogramome = downreprogramome_genes
+)
+
+```
+
+
+```{r}
+# Extract all significant genes with positive and negative log2FoldChanges
+significant_up_genes <- shrunk_tf_results_df %>%
+                      filter(padj < 0.05 & log2FoldChange > 0)
+
+significant_down_genes <- shrunk_tf_results_df %>%
+                         filter(padj < 0.05 & log2FoldChange < 0)
+
+
+```
+
+```{r}
+head(significant_up_genes)
+```
+```{r}
+head(upreprogramome_genes)
+```
+```{r}
+# Assuming shrunk_tf_results_df is your DESeq2 results dataframe and upreprogramome_genes is a vector of gene IDs
+# First, ensure that your gene IDs in upreprogramome_genes do not have version numbers if they are present in your shrunk_tf_results_df
+upreprogramome_genes <- sub("\\..*", "", upreprogramome_genes)
+
+# Now, subset your shrunk_tf_results_df to include only the rows with gene IDs that match the upreprogramome_genes
+upreprogramome_genes <- shrunk_tf_results_df[rownames(shrunk_tf_results_df) %in% upreprogramome_genes, ]
+
+# Assuming shrunk_tf_results_df is your DESeq2 results dataframe and upreprogramome_genes is a vector of gene IDs
+# First, ensure that your gene IDs in upreprogramome_genes do not have version numbers if they are present in your shrunk_tf_results_df
+downreprogramome_genes <- sub("\\..*", "", downreprogramome_genes)
+
+# Now, subset your shrunk_tf_results_df to include only the rows with gene IDs that match the upreprogramome_genes
+downreprogramome_genes <- shrunk_tf_results_df[rownames(shrunk_tf_results_df) %in% downreprogramome_genes, ]
+
+```
+
+
+```{r}
+
+# Extract gene IDs as vectors from the filtered dataframes
+significant_up_gene_ensembl <- rownames(significant_up_genes)
+significant_down_gene_ensembl <- rownames(significant_down_genes)
+
+upreprogramome_gene_ensembl <- rownames(upreprogramome_genes)
+downreprogramome_gene_ensembl <- rownames(downreprogramome_genes)
+
+
+```
+
+
+```{r}
+# Assuming that upreprogramome_genes and downreprogramome_genes are correctly formatted as vectors
+# Now the lists for the Venn diagram are set up correctly:
+significant_up_gene_ensembl <- as.character(significant_up_gene_ensembl)
+significant_down_gene_ensembl <- as.character(significant_down_gene_ensembl)
+
+upreprogramome_gene_ensembl <- as.character(upreprogramome_gene_ensembl)
+downreprogramome_gene_ensembl <- as.character(downreprogramome_gene_ensembl)
+```
+
+
+```{r}
+library(VennDiagram)
+library(grid)
+
+# Define dimensions in inches
+width_in_inches <- 10
+height_in_inches <- 6
+
+# Create Venn Diagrams and save as PNG files
+venn.plot.up <- venn.diagram(
+  x = list(
+    Significant_Up = significant_up_gene_ensembl,
+    Upreprogramome = upreprogramome_gene_ensembl
+  ),
+  category.names = c("Significantly Upregulated", "Upreprogramome"),
+  filename = "venn_diagram_up.png",  # Saving as PNG file
+  output = TRUE,
+  imagetype = "png",
+  height = height_in_inches,  # height in inches
+  width = width_in_inches,    # width in inches
+  resolution = 300,
+  compression = "lzw",
+  units = "in",  # specify units
+  lwd = 2,       # line width
+  cex = 1.5,     # font size scaling factor
+  fontface = "bold",  # font style
+  cat.cex = 1.2,      # category label scaling factor
+  cat.fontface = "bold",  # category label font style
+  cat.default.pos = "outer",  # category label position
+  cat.dist = 0.05,   # distance for category labels from the center of the diagram
+  margin = 0.05      # margin around the plot
+)
+
+venn.plot.down <- venn.diagram(
+  x = list(
+    Significant_Down = significant_down_gene_ensembl,
+    Downreprogramome = downreprogramome_gene_ensembl
+  ),
+  category.names = c("Significant Downregulated", "Downreprogramome"),
+  filename = "venn_diagram_down.png",  # Saving as PNG file
+  output = TRUE,
+  imagetype = "png",
+  height = height_in_inches,
+  width = width_in_inches,
+  resolution = 300,
+  compression = "lzw",
+  units = "in",
+  lwd = 2,
+  cex = 1.5,
+  fontface = "bold",
+  cat.cex = 1.2,
+  cat.fontface = "bold",
+  cat.default.pos = "outer",
+  cat.dist = 0.05,
+  margin = 0.05
+)
+
+```
+
+![](venn_diagram_down.png)
+
+![](venn_diagram_up.png)
+I apologize for these clipping off the screen to the right. I was having enormous difficulty getting venn diagrams to size the window dynamically to the diagram. 
+
+```{r}
+# Load the required library
+library(fgsea)
+
+# Prepare your ranked list of genes
+# This example assumes `shrunk_tf_results_df` is your dataframe from DESeq2 results
+# and it's sorted from most upregulated to most downregulated based on log2FoldChange
+ranked_list <- with(shrunk_tf_results_df, setNames(-log10(padj) * sign(log2FoldChange), shrunk_tf_results_df$gene_symbol_or_ORF))
+
+
+```
+
+
+```{r}
+# Prepare gene sets from the filtered dataframes
+gene_sets <- list(
+  Upreprogramome = upreprogramome_genes$gene_symbol_or_ORF,
+  Downreprogramome = downreprogramome_genes$gene_symbol_or_ORF
+)
+
+# Run GSEA for upregulated genes
+# 'scoreType = "pos"' focuses the analysis on the positive side of the ranked list
+gsea_results_up <- fgsea(pathways = gene_sets["Upreprogramome"], 
+                         stats = ranked_list, 
+                         scoreType = "pos",
+                         minSize = 15,    # Minimum size of gene set to consider
+                         maxSize = 500,   # Maximum size of gene set to consider
+                         nperm = 10000)   # Number of permutations for estimation
+
+# Run GSEA for downregulated genes
+# 'scoreType = "neg"' focuses the analysis on the negative side of the ranked list
+gsea_results_down <- fgsea(pathways = gene_sets["Downreprogramome"], 
+                           stats = ranked_list, 
+                           scoreType = "neg",
+                           minSize = 15,
+                           maxSize = 500,
+                           nperm = 10000)
+
+# Print the GSEA results to examine the outputs
+print(gsea_results_up)
+print(gsea_results_down)
+```
+```{r}
+# Extract the most significant results
+most_significant_up <- gsea_results_up[which.min(gsea_results_up$pval), ]
+most_significant_down <- gsea_results_down[which.min(gsea_results_down$pval), ]
+
+# Confirm the pathway name or index
+print(most_significant_up$pathway)
+print(most_significant_down$pathway)
+```
+
+```{r}
+# Visualization of the most significant GSEA results
+# Ensure the pathway is selected correctly
+
+# Since 'most_significant_up$pathway' and 'most_significant_down$pathway' return the names directly:
+plotEnrichment(pathway = gene_sets[["Upreprogramome"]], ranked_list)
+# Add a title manually using the title() function in base R
+
+
+plotEnrichment(pathway = gene_sets[["Downreprogramome"]], ranked_list)
+# Add a title manually using the title() function in base R
+
+```
+These plots extend over my transcription factors ranked from left to right by most upregulated to most downregulated. 
+
+The first of these two enrichment plots is for the upreprogramome across my TFs, and the second is for the downreprogramome.
+
