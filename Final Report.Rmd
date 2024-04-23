@@ -9,7 +9,7 @@ output:
 ---
 
 # Introduction:
-Despite the OSKM reprogramming factors having been initially reported as inducing genome-wide transcriptional responses, actually, less than 1% of cells undergo *authentic* pluripotency reprogramming (become iPSCs). In reality, their pluripotency induction is extremely inefficient, slow, and stochastic. To develop a sense of what kinds of transcriptomic changes the Yamanaka factors struggle to induce, and consistently succeed at, the authors developed the concept of the “reprogramome” – or the full complement of genes requiring reprogramming for a differentiated cell to become an iPSC. Reprogamming letigimacy, then, describes scenarios where genes fully reach iPSC expression patterns.
+Despite the OSKM reprogramming factors having been initially reported as inducing genome-wide transcriptional responses, actually, less than 1% of cells undergo *authentic* pluripotency reprogramming (become iPSCs). In reality, their pluripotency induction is extremely inefficient, slow, and stochastic. To develop a sense of what kinds of transcriptomic changes the Yamanaka factors struggle to induce, and consistently succeed at, the authors of the paper that most inspired me - called Human Transcription factor responsive to initial reprogrmaming predominantly undergo legitimate reprogramming during fibroblast conversion to iPSCs - developed the concept of the “reprogramome” – or the full complement of genes requiring reprogramming for a differentiated cell to become an iPSC. Reprogamming letigimacy, then, describes scenarios where genes fully reach iPSC expression patterns.
 One of the most essential steps towards pluripotency induction is erasing the differentiated cell’s transcription factor system, and inducing the pluripotent TF system. These transcription factors can be thought of in four different categories in terms of their response to OSKM induction - in their progression from a differentiated state to that of an iPSC. The authors of the paper that most inspired me - *Human transcription factors responsive to initial reprogramming predominantly undergo legitimate reprogramming during fibroblast conversion to iPSCs* refer to this suite of TFs as the reprogrammome. It includes:
 
 1. Transcription factors that were legitimately reprogrammed (their expression levels returned to or exceeded levels observed in the human embryonic stem cells).
@@ -158,7 +158,8 @@ The first result that I will demonstrate is just an exploratory PCA on variance-
 ```{r}
 plotPCA(vst(tf_dds))
 ```
-## DGE
+
+## Differential Gene Expression
 
 ```{r, echo = FALSE, results='hide'}
 all_results <- results(dds_yamanaka, contrast=c("condition", "96 Hours Post-OSKM", "Control"))
@@ -457,7 +458,7 @@ We're seeing some intuitive GO categories, like stem cell population maintenance
 **Revigo Treemap of all significant negative LFC genes, enriched in the untreated fibroblast condition:**
 
 ![](all_neg_treemap.png)
-The "aquamarine"embryonic organ development" semantic group, which very much dominates the GO composition, is aggregating developmental/cell differentiation processes, for the most part. This is very much as to be expected if the trajectory of Yamanaka factor induction is meant to take a fibroblast from differentiated to stem-like. 
+The embryonic organ development" semantic group, which very much dominates the GO composition, is aggregating developmental/cell differentiation processes, for the most part. This is very much as to be expected if the trajectory of Yamanaka factor induction is meant to take a fibroblast from differentiated to stem-like. 
 
 
 **Revigo Treemap of top ten most significant positive LFC OSKM-treatment-enriched genes:**
@@ -666,7 +667,7 @@ venn.plot.down <- venn.diagram(
 
 ![](venn_diagram_up.png)
 
-I generate simple venn diagrams for a clear first introduction to the overlap of the up/down-reprogamome and our significantly upregulated/downregulated control/OSKM data. The down venn diagram has 12 overlapping TFs, and the up venn diagram has 8. Obviously, this visualization is agnostic to a TF's degree of L2FC and p value. 
+I generate simple venn diagrams for a clear first introduction to the overlap of the up/down-reprogamome and our significantly upregulated/downregulated control/OSKM data. The down venn diagram has 58 overlapping TFs, and the up venn diagram has 46. Obviously, this visualization is agnostic to a TF's degree of L2FC and p value. 
 
 ## GSEA
 ```{r, echo = FALSE, results='hide'}
@@ -733,7 +734,7 @@ The first of these two enrichment plots is for the upreprogramome across my TFs,
 
 From viewing the summary of the GSEA objects, the leadingEdge gene that contributes most to the enrichment score of the upreprogramome before it peaks is POU5F1, which drove the gastrulation GO term in the original DGE analysis. It plays a key and well characterized role in embryonic development and stem cell pluripotency. The leadingEdge gene that contributed most to the enrichment score of the downreprogramome before it peaked was NR2F2. NR2F2 has widely-varying purposes, but importantly has been implicated in cell differentiation regulation. Its downregulation driving a downregulome enrichment stands to reason, then.
 
-And overall, these significance values for the enrichment of the upregulome in upregulated genes and the downregulome in downregulated genes is very low, at 0.0004 and 0.001, respectively. 
+And overall, these significance values for the enrichment of the upreprogramome in upregulated genes and the downreprogramome in downregulated genes are very low, well below, the significance cutoff, and even lower for the upreprogramome.
 
 # Methods:
 
